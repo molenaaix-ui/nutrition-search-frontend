@@ -6,13 +6,16 @@
     <title>Cloudflare 營養數據搜尋 (兩段式查詢)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        /* 移除表格樣式，因為我們現在使用清單 */
+        /* 讓表格在小螢幕上可以捲動 */
+        .details-table-container {
+            overflow-x: auto;
+        }
     </style>
 </head>
 <body class="bg-gray-100 min-h-screen p-4 sm:p-8">
 
     <div class="max-w-4xl mx-auto bg-white shadow-xl rounded-lg p-6 sm:p-8">
-        <h1 class="text-3xl font-bold text-gray-800 mb-6 border-b pb-2">營養數據即時搜尋 (第一階段)</h1>
+        <h1 class="text-3xl font-bold text-gray-800 mb-6 border-b pb-2">營養數據即時搜尋 (兩段式查詢)</h1>
         
         <div class="mb-6">
             <input type="text" id="search-input" placeholder="請輸入商品名稱、分類或品牌..."
@@ -24,7 +27,7 @@
 
         <div id="results-container" class="hidden">
             <div id="results-list" class="space-y-2 border border-gray-200 rounded-lg p-3 bg-white">
-            </div>
+                </div>
         </div>
         
         <div class="mt-4 text-center">
@@ -39,27 +42,64 @@
             <p class="text-xl font-semibold text-red-500">😭 找不到符合條件的商品。</p>
             <p class="text-gray-500 mt-2">請嘗試使用其他關鍵字，或檢查是否有錯別字。</p>
         </div>
-
-    </div>
+        <div id="details-container" class="hidden mt-8">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4" id="details-item-name"></h2>
+            
+            <button onclick="hideDetails()" 
+                    class="mb-4 px-4 py-1 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition duration-150">
+                ← 返回搜尋結果
+            </button>
+            
+            <div class="details-table-container shadow-md rounded-lg">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-blue-600 text-white">
+                        <tr>
+                            <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">品名</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">備註</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">重量(g)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">熱量(kcal)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">蛋白質(g)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">脂肪(g)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">飽和脂肪(g)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">反式脂肪(g)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">碳水化合物(g)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">糖(g)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">鈉(mg)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="details-tbody" class="bg-white divide-y divide-gray-200">
+                        </tbody>
+                </table>
+            </div>
+            
+            <p id="copy-status" class="hidden mt-3 text-sm font-semibold text-green-600">
+                ✅ 營養數據已成功複製到剪貼簿，可貼到 Excel。
+            </p>
+        </div>
+        </div>
 
     <script>
-        // !! API 網址已替換為您部署的服務網址 !!
         const API_URL = 'https://nutrition-search-worker.food-data.workers.dev'; 
         
         // --- 分頁與狀態管理 ---
         const ITEMS_PER_PAGE = 20;
-        let allResults = []; // 儲存所有從 API 獲取的結果
-        let currentStartIndex = 0; // 目前顯示到第幾筆
+        let allResults = []; 
+        let currentStartIndex = 0; 
         // -----------------------
 
         const searchInput = document.getElementById('search-input');
         const statusText = document.getElementById('status-text');
-        // resultsContainer 仍然用來控制結果區域的顯示/隱藏
         const resultsContainer = document.getElementById('results-container'); 
-        // resultsList 是新的清單容器 ID
         const resultsList = document.getElementById('results-list'); 
         const noResultsDiv = document.getElementById('no-results');
         const loadMoreBtn = document.getElementById('load-more-btn');
+        
+        // --- 第二段查詢 DOM 元素 ---
+        const detailsContainer = document.getElementById('details-container');
+        const detailsItemName = document.getElementById('details-item-name');
+        const detailsTbody = document.getElementById('details-tbody');
+        const copyStatus = document.getElementById('copy-status');
 
         let debounceTimeout;
         
@@ -68,31 +108,30 @@
             debounceTimeout = setTimeout(performSearch, 300); 
         }
         
-        /**
-         * 執行 API 搜尋並設定分頁狀態
-         */
-        async function performSearch() {
-            const query = searchInput.value.trim();
-            let queryInfo = '';
-
-            if (query.length < 2) {
-                statusText.textContent = '請輸入至少 2 個字符開始搜尋';
-                resultsContainer.classList.add('hidden');
-                noResultsDiv.classList.add('hidden');
-                loadMoreBtn.classList.add('hidden');
-                resultsList.innerHTML = ''; // 清空清單
-                return;
-            }
-
-            statusText.textContent = `正在搜尋 "${query}"...`;
+        // 確保在每次新的搜尋開始前，隱藏詳細資訊
+        function prepareNewSearch() {
+            // 隱藏第二段
+            detailsContainer.classList.add('hidden');
+            // 清空第一段
             resultsContainer.classList.add('hidden');
             noResultsDiv.classList.add('hidden');
             loadMoreBtn.classList.add('hidden');
             resultsList.innerHTML = ''; 
             
-            // 重置分頁狀態
             allResults = [];
             currentStartIndex = 0;
+        }
+
+        async function performSearch() {
+            const query = searchInput.value.trim();
+            if (query.length < 2) {
+                prepareNewSearch();
+                statusText.textContent = '請輸入至少 2 個字符開始搜尋';
+                return;
+            }
+
+            prepareNewSearch(); // 每次開始新搜尋前執行清空
+            statusText.textContent = `正在搜尋 "${query}"...`;
 
             try {
                 const url = `${API_URL}?q=${encodeURIComponent(query)}`;
@@ -109,23 +148,18 @@
                 const standardQuery = data.standard_query;
                 
                 if (totalCount > 0) {
-                    
-                    if (query !== standardQuery) {
-                        queryInfo = ` (實際查詢：${standardQuery})`;
-                    }
+                    let queryInfo = (query !== standardQuery) ? ` (實際查詢：${standardQuery})` : '';
 
-                    // 初始顯示第一頁
-                    resultsList.innerHTML = ''; // 清空清單
+                    resultsList.innerHTML = ''; 
                     renderResults(allResults, 0, ITEMS_PER_PAGE);
 
-                    // 更新狀態文字
                     const itemsShown = Math.min(ITEMS_PER_PAGE, totalCount);
                     statusText.innerHTML = `已找到 ${totalCount} 筆結果。目前顯示 ${itemsShown} 筆。${queryInfo}`;
                     resultsContainer.classList.remove('hidden');
                     
                     updateLoadMoreButton();
-                    
                 } else {
+                    let queryInfo = (data.standard_query && query !== data.standard_query) ? ` (實際查詢：${data.standard_query})` : '';
                     statusText.textContent = `找不到與 "${query}" 相關的結果。${queryInfo}`;
                     noResultsDiv.classList.remove('hidden');
                 }
@@ -138,10 +172,7 @@
         }
         
         /**
-         * 繪製結果到清單中 (只顯示 品名 [查看])
-         * @param {Array} items - 要繪製的數據陣列
-         * @param {number} start - 開始的索引
-         * @param {number} end - 結束的索引 (不包含)
+         * 繪製結果到清單中 (第一段)
          */
         function renderResults(items, start, end) {
             const itemsToRender = items.slice(start, end);
@@ -151,75 +182,168 @@
                 const div = document.createElement('div');
                 div.className = 'flex items-center justify-between p-2 hover:bg-gray-100 border-b last:border-b-0';
                 
-                // 處理高亮顯示
                 let displayItemName = item['品名'];
                 const regex = new RegExp(query, 'gi');
                 displayItemName = displayItemName.replace(regex, (match) => `<span class="bg-yellow-200 font-semibold rounded px-1">${match}</span>`);
 
-                // 建立 品名 [查看] 結構
+                // 傳遞 item 索引，供 showDetails 使用
+                const itemIndex = allResults.indexOf(item); 
+
                 div.innerHTML = `
                     <span class="text-gray-900">${displayItemName}</span>
                     <button class="text-blue-600 hover:text-blue-800 font-semibold ml-4" 
-                            onclick="showDetails('${item['品名']}', ${items.indexOf(item)})">
+                            onclick="showDetails(${itemIndex})">
                         [查看]
                     </button>
                 `;
-                resultsList.appendChild(div); // 更改為添加到 resultsList
+                resultsList.appendChild(div); 
             });
             
-            // 更新目前顯示的索引
             currentStartIndex = end;
         }
 
-        /**
-         * 處理「載入更多」按鈕點擊事件
-         */
-        function loadMore() {
-            const nextEndIndex = currentStartIndex + ITEMS_PER_PAGE;
-            
-            // 繪製下一批結果
-            renderResults(allResults, currentStartIndex, nextEndIndex);
+        // --- 第二段功能實作 ---
 
-            // 更新按鈕狀態
+        /**
+         * 顯示詳細資訊表格 (第二段)
+         * @param {number} index - 該項目在 allResults 中的索引
+         */
+        function showDetails(index) {
+            const item = allResults[index];
+            if (!item) return;
+
+            // 隱藏第一段內容
+            resultsContainer.classList.add('hidden');
+            loadMoreBtn.classList.add('hidden');
+            noResultsDiv.classList.add('hidden');
+            copyStatus.classList.add('hidden');
+            
+            // 顯示第二段內容
+            detailsContainer.classList.remove('hidden');
+            detailsTbody.innerHTML = '';
+            
+            // 設置標題
+            detailsItemName.textContent = item['品名'];
+            
+            // 處理數值格式
+            const formatValue = (value) => {
+                const num = parseFloat(value);
+                if (isNaN(num) || num === 0) return '-';
+                return num.toFixed(1);
+            };
+
+            // 繪製詳細表格行
+            const row = document.createElement('tr');
+            row.className = 'bg-white hover:bg-gray-50';
+
+            row.innerHTML = `
+                <td class="px-3 py-3 text-sm font-medium text-gray-900">${item['品名']}</td>
+                <td class="px-3 py-3 text-sm text-gray-500">${item['備註'] || '-'}</td>
+                <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['重量(g)'])}</td>
+                <td class="px-3 py-3 text-sm font-bold text-red-600">${formatValue(item['熱量(kcal)'])}</td>
+                <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['蛋白質(g)'])}</td>
+                <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['脂肪(g)'])}</td>
+                <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['飽和脂肪(g)'])}</td>
+                <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['反式脂肪(g)'])}</td>
+                <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['碳水化合物(g)'])}</td>
+                <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['糖(g)'])}</td>
+                <td class="px-3 py-3 text-sm text-gray-700">${item['鈉(mg)']}</td>
+                <td class="px-3 py-3 text-sm">
+                    <button class="text-blue-600 hover:text-blue-800 font-semibold" 
+                            onclick="copyData(${index})">
+                        [複製]
+                    </button>
+                </td>
+            `;
+            detailsTbody.appendChild(row);
+
+            // 捲動到頂部
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+        
+        /**
+         * 返回第一段搜尋結果
+         */
+        function hideDetails() {
+            detailsContainer.classList.add('hidden');
+            resultsContainer.classList.remove('hidden');
+            
+            // 恢復顯示載入更多按鈕 (如果需要)
+            updateLoadMoreButton(); 
+            
+            // 捲動到頂部
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+
+        /**
+         * 處理資料複製到剪貼簿的功能
+         * @param {number} index - 該項目在 allResults 中的索引
+         */
+        function copyData(index) {
+            const item = allResults[index];
+            if (!item) return;
+            
+            const formatValue = (value) => {
+                const num = parseFloat(value);
+                // 使用 toFixed(1) 保留一位小數，或使用原始字串如果無效
+                return isNaN(num) ? '' : num.toFixed(1);
+            };
+
+            // 格式: 品名\t重量(g)\t熱量(kcal)\t...
+            const dataToCopy = [
+                item['品名'],
+                formatValue(item['重量(g)']),
+                formatValue(item['熱量(kcal)']),
+                formatValue(item['蛋白質(g)']),
+                formatValue(item['脂肪(g)']),
+                formatValue(item['飽和脂肪(g)']),
+                formatValue(item['反式脂肪(g)']),
+                formatValue(item['碳水化合物(g)']),
+                formatValue(item['糖(g)']),
+                item['鈉(mg)'] // 鈉(mg) 通常是整數，但如果 API 回傳字串就保留
+            ].join('\t'); // 使用 Tab 符號分隔，適用於 Excel
+
+            // 複製到剪貼簿
+            navigator.clipboard.writeText(dataToCopy).then(() => {
+                copyStatus.classList.remove('hidden');
+                setTimeout(() => {
+                    copyStatus.classList.add('hidden');
+                }, 3000); // 3 秒後隱藏提示
+            }).catch(err => {
+                console.error('複製失敗:', err);
+                alert('複製失敗，請檢查瀏覽器權限或手動複製：\n\n' + dataToCopy);
+            });
+        }
+        
+        // 保留 loadMore 和 updateLoadMoreButton，邏輯不變
+        function loadMore() {
+            // ... (與您提供的程式碼邏輯相同，用於載入下一批結果)
+            const nextEndIndex = currentStartIndex + ITEMS_PER_PAGE;
+            renderResults(allResults, currentStartIndex, nextEndIndex);
             updateLoadMoreButton();
-            
-            // 更新狀態文字，顯示當前已載入筆數
             statusText.innerHTML = `已找到 ${allResults.length} 筆結果。目前顯示 ${currentStartIndex} 筆。`;
-            
-            // 平滑捲動到按鈕處
             loadMoreBtn.scrollIntoView({
                 behavior: 'smooth',
                 block: 'center'
             });
         }
 
-        /**
-         * 根據目前狀態更新載入更多按鈕的文字和可見性
-         */
         function updateLoadMoreButton() {
+            // ... (與您提供的程式碼邏輯相同，用於更新按鈕狀態)
             const totalCount = allResults.length;
             const itemsShown = currentStartIndex;
             const remainingCount = totalCount - itemsShown;
 
             if (remainingCount > 0) {
-                // 尚有餘額，顯示按鈕
                 loadMoreBtn.textContent = `載入更多 (尚餘 ${remainingCount} 筆)`;
                 loadMoreBtn.classList.remove('hidden');
                 loadMoreBtn.disabled = false;
             } else {
-                // 全部載入完畢，顯示已載入所有結果
                 loadMoreBtn.textContent = `已載入所有 ${totalCount} 筆結果`;
                 loadMoreBtn.disabled = true;
-                loadMoreBtn.classList.remove('hidden'); // 確保它還在
+                loadMoreBtn.classList.remove('hidden');
             }
-        }
-        
-        /**
-         * 這是第二段查詢的預留功能 (點擊 [查看] 會觸發)
-         */
-        function showDetails(itemName, index) {
-            // 這個函數將在第二段查詢中實作
-            alert(`已點擊：${itemName}。準備進入第二段查詢格式...`);
         }
     </script>
 </body>
