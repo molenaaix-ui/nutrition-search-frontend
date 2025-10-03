@@ -216,6 +216,39 @@
         ];
 
         /**
+         * 新增的通用函式：格式化數值以用於顯示在表格中
+         * 規則：
+         * 1. 如果是有效數字 (非 0)，保留一位小數。
+         * 2. 如果是 '0'，顯示 '0.0' (或 '0' 給鈉)。
+         * 3. 如果是非數字字串 ('未標示', '(無)' 等)，直接顯示該字串。
+         * @param {string | number} value - 原始數值或字串
+         * @param {string} key - 營養素鍵名
+         * @returns {string} - 格式化後的字串
+         */
+        function formatNumericValue(value, key) {
+            const num = parseFloat(value);
+            
+            // 檢查是否為無效數字 (NaN) 或空值/非數字字串
+            if (isNaN(num)) {
+                // 如果是字串（例如 '未標示' 或 '(無)'），直接返回原始值
+                return (typeof value === 'string' && value.trim() !== '') ? value.trim() : '-';
+            }
+            
+            // 如果是 0
+            if (num === 0) {
+                // 鈉(mg) 通常為整數
+                return (key === '鈉(mg)') ? '0' : '0.0';
+            }
+            
+            // 如果是有效數字 (非 0)
+            if (key === '鈉(mg)') {
+                return Math.round(num).toString(); // 鈉(mg) 顯示為整數
+            }
+            
+            return num.toFixed(1); // 其他營養素顯示為一位小數
+        }
+
+        /**
          * 顯示詳細資訊表格 (第二段)
          */
         function showDetails(index) {
@@ -242,16 +275,27 @@
                 originalWeight: originalWeight
             };
             
-            // 儲存每 g 的價值
+            // 儲存每 g 的價值。這裡只計算數值，非數值的原始字串也儲存在 item 中。
             if (originalWeight > 0) {
                 NUTRITION_KEYS.forEach(key => {
-                    originalItemData[key + '_per_g'] = (parseFloat(item[key]) || 0) / originalWeight;
+                    const value = parseFloat(item[key]);
+                    // 只有當值是有效數字時才計算 per_g
+                    originalItemData[key + '_per_g'] = isNaN(value) ? 0 : value / originalWeight;
                 });
             }
 
             // 繪製詳細表格行
             const row = document.createElement('tr');
             row.className = 'bg-white hover:bg-gray-50';
+            
+            // 初始化營養素欄位的 HTML，並利用 formatNumericValue 顯示
+            let nutritionTds = NUTRITION_KEYS.map(key => `
+                <td class="px-3 py-3 text-sm ${key === '熱量(kcal)' ? 'font-bold text-red-600' : 'text-gray-700'}" 
+                    data-key="${key}">
+                    ${formatNumericValue(item[key], key)}
+                </td>
+            `).join('');
+
 
             row.innerHTML = `
                 <td class="px-3 py-3 text-sm font-medium text-gray-900" data-key="品名">${item['品名']}</td>
@@ -267,14 +311,7 @@
                            oninput="recalculateNutrition(event)">
                 </td>
                 
-                <td class="px-3 py-3 text-sm font-bold text-red-600" data-key="熱量(kcal)"></td>
-                <td class="px-3 py-3 text-sm text-gray-700" data-key="蛋白質(g)"></td>
-                <td class="px-3 py-3 text-sm text-gray-700" data-key="脂肪(g)"></td>
-                <td class="px-3 py-3 text-sm text-gray-700" data-key="飽和脂肪(g)"></td>
-                <td class="px-3 py-3 text-sm text-gray-700" data-key="反式脂肪(g)"></td>
-                <td class="px-3 py-3 text-sm text-gray-700" data-key="碳水化合物(g)"></td>
-                <td class="px-3 py-3 text-sm text-gray-700" data-key="糖(g)"></td>
-                <td class="px-3 py-3 text-sm text-gray-700" data-key="鈉(mg)"></td>
+                ${nutritionTds}
                 
                 <td class="px-3 py-3 text-sm">
                     <button class="text-blue-600 hover:text-blue-800 font-semibold" 
@@ -285,52 +322,42 @@
             `;
             detailsTbody.appendChild(row);
 
-            // 初始載入時，先執行一次計算以填充數據
-            recalculateNutrition({ target: document.getElementById('weight-input-field') });
+            // 初始載入時，不必再執行 recalculateNutrition，因為已經在 innerHTML 中填充了原始數據
+            // 只有當用戶修改重量時才需要重新計算
 
             window.scrollTo({ top: 0, behavior: 'smooth' });
         }
         
         /**
          * 根據新的重量重新計算並更新營養數據
-         * @param {Event} event - input 事件
          */
         function recalculateNutrition(event) {
             const inputElement = event.target;
             let newWeight = parseFloat(inputElement.value);
 
-            // 確保重量為有效數字，如果無效則設為 0
             if (isNaN(newWeight) || newWeight < 0) {
                 newWeight = 0;
             }
             
             // 更新輸入框的值，確保只保留一位小數 (如果不是整數)
-            if (inputElement.value !== newWeight.toString()) {
-                 inputElement.value = newWeight.toFixed(1);
-            }
+            inputElement.value = newWeight.toFixed(1);
 
             const row = inputElement.closest('tr');
 
             NUTRITION_KEYS.forEach(key => {
                 const perGValue = originalItemData[key + '_per_g'];
-                let newValue;
+                const originalValue = originalItemData.item[key];
                 
-                if (key === '鈉(mg)') {
-                    // 鈉(mg) 保持整數顯示，但計算仍需使用 perG
-                    newValue = (perGValue * newWeight);
-                    // 由於鈉(mg)在您提供的範例中是整數，這裡我們使用 Math.round 或 toFixed(0)
-                    row.querySelector(`[data-key="${key}"]`).textContent = Math.round(newValue) || '-';
+                const targetTd = row.querySelector(`[data-key="${key}"]`);
+                
+                // 檢查原始數據是否為可計算的數字
+                if (perGValue > 0 || (perGValue === 0 && parseFloat(originalValue) === 0)) {
+                    // 如果原始數據是有效的數字（或 0），則按比例計算
+                    const newValue = perGValue * newWeight;
+                    targetTd.textContent = formatNumericValue(newValue, key);
                 } else {
-                    // 其他營養成分保留一位小數
-                    newValue = perGValue * newWeight;
-                    
-                    const formatValue = (val) => {
-                        if (val === null || val === undefined || val <= 0) return '-';
-                        // 依照您的範例，我們保留一位小數
-                        return val.toFixed(1); 
-                    };
-
-                    row.querySelector(`[data-key="${key}"]`).textContent = formatValue(newValue);
+                    // 如果原始數據不是數字（例如 '未標示', '(無)'），則不計算，直接顯示原始字串
+                    targetTd.textContent = formatNumericValue(originalValue, key);
                 }
             });
         }
@@ -360,31 +387,32 @@
                 return;
             }
 
-            // 使用原始每 g 數據重新計算一次，確保複製的數據與畫面上的一致
+            // 取得目前顯示在表格中的計算/原始字串值
+            const row = inputElement.closest('tr');
+            
             const calculatedValues = NUTRITION_KEYS.map(key => {
                 const perGValue = originalItemData[key + '_per_g'];
-                const value = perGValue * newWeight;
+                const originalValue = originalItemData.item[key];
                 
-                if (key === '鈉(mg)') {
-                    // 鈉(mg) 使用整數
-                    return Math.round(value);
+                // 檢查原始數據是否為可計算的數字
+                if (perGValue > 0 || (perGValue === 0 && parseFloat(originalValue) === 0)) {
+                    // 1. 如果是數字 (或 0)，則按比例計算，並格式化為數字字串
+                    const value = perGValue * newWeight;
+                    
+                    if (key === '鈉(mg)') {
+                        // 鈉(mg) 使用整數
+                        return Math.round(value).toString();
+                    } else {
+                        // 其他數據保留一位小數
+                        return value.toFixed(1);
+                    }
                 } else {
-                    // 其他數據保留一位小數
-                    return value.toFixed(1);
+                    // 2. 如果原始數據不是數字 (例如 '未標示', '(無)')，則直接返回原始字串
+                    return originalValue;
                 }
             });
 
             // 格式: 品名\t重量(g)\t熱量(kcal)\t蛋白質(g)\t...
-            const dataToCopy = [
-                item['品名'],
-                newWeight.toFixed(1), // 使用新的重量
-                ...calculatedValues.slice(0, 9) // 排除鈉(mg)
-            ];
-
-            // 檢查您的 Excel 格式要求：
-            // 【品名】\t重量\t熱量\t蛋白質\t脂肪\t飽和脂肪\t反式脂肪\t碳水化合物\t糖\t鈉
-            // 由於 calculatedValues 包含 8 個營養素 (熱量到鈉)，總共 10 個欄位
-
             const finalDataToCopy = [
                  item['品名'],
                  newWeight.toFixed(1),
@@ -405,6 +433,7 @@
             });
         }
         
+        // --- (載入更多/按鈕狀態函式，未變更) ---
         function loadMore() {
             const nextEndIndex = currentStartIndex + ITEMS_PER_PAGE;
             renderResults(allResults, currentStartIndex, nextEndIndex);
