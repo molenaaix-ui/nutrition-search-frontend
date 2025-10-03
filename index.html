@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloudflare 營養數據搜尋</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 確保表格在小螢幕上可以捲動 */
+        .table-container {
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4 sm:p-8">
+
+    <div class="max-w-4xl mx-auto bg-white shadow-xl rounded-lg p-6 sm:p-8">
+        <h1 class="text-3xl font-bold text-gray-800 mb-6 border-b pb-2">營養數據即時搜尋</h1>
+        
+        <div class="mb-6">
+            <input type="text" id="search-input" placeholder="請輸入商品名稱、分類或品牌..."
+                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-lg"
+                   oninput="performSearchDebounced()">
+        </div>
+        
+        <p id="status-text" class="text-gray-500 mb-4 text-sm">請輸入關鍵字進行搜尋 (例如：貝果、拿鐵)</p>
+
+        <div id="results-container" class="table-container shadow-md rounded-lg hidden">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-blue-600 text-white sticky top-0">
+                    <tr>
+                        <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">品名</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">分類/品牌</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">熱量(kcal)</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">蛋白質(g)</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">脂肪(g)</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">碳水(g)</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">鈉(mg)</th>
+                    </tr>
+                </thead>
+                <tbody id="results-tbody" class="bg-white divide-y divide-gray-200">
+                    </tbody>
+            </table>
+        </div>
+
+        <div id="no-results" class="hidden text-center py-10">
+            <p class="text-xl font-semibold text-red-500">😭 找不到符合條件的商品。</p>
+            <p class="text-gray-500 mt-2">請嘗試使用其他關鍵字，或檢查是否有錯別字。</p>
+        </div>
+
+    </div>
+
+    <script>
+        // !! 請注意：API 網址已替換為您部署的服務網址 !!
+        const API_URL = 'https://nutrition-search-worker.food-data.workers.dev/'; 
+        const searchInput = document.getElementById('search-input');
+        const statusText = document.getElementById('status-text');
+        const resultsContainer = document.getElementById('results-container');
+        const resultsTbody = document.getElementById('results-tbody');
+        const noResultsDiv = document.getElementById('no-results');
+
+        // 使用 Debounce (防抖) 優化搜尋，避免使用者輸入過快導致過多 API 請求
+        let debounceTimeout;
+        
+        function performSearchDebounced() {
+            clearTimeout(debounceTimeout);
+            debounceTimeout = setTimeout(performSearch, 300); // 延遲 300ms 後執行
+        }
+        
+        async function performSearch() {
+            const query = searchInput.value.trim();
+
+            // 至少需要兩個字符才開始搜尋
+            if (query.length < 2) {
+                statusText.textContent = '請輸入至少 2 個字符開始搜尋';
+                resultsContainer.classList.add('hidden');
+                noResultsDiv.classList.add('hidden');
+                resultsTbody.innerHTML = '';
+                return;
+            }
+
+            statusText.textContent = `正在搜尋 "${query}"...`;
+            resultsContainer.classList.add('hidden');
+            noResultsDiv.classList.add('hidden');
+            resultsTbody.innerHTML = '';
+
+            try {
+                const url = `${API_URL}?q=${encodeURIComponent(query)}`;
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (response.status !== 200 || data.error) {
+                    statusText.textContent = `API 錯誤：${data.error || '無法連線到伺服器'}`;
+                    return;
+                }
+
+                const results = data.data;
+                const standardQuery = data.standard_query;
+                
+                resultsTbody.innerHTML = ''; // 清空舊結果
+                
+                if (results.length > 0) {
+                    // 顯示結果
+                    results.forEach(item => {
+                        const row = document.createElement('tr');
+                        row.className = 'hover:bg-gray-50';
+                        
+                        // 處理數值，如果有小數位，保留一位，如果為 0 則顯示 '-'
+                        const formatValue = (value) => {
+                            if (value === 0 || value === '0') return '-';
+                            return parseFloat(value).toFixed(1);
+                        };
+
+                        // 處理品名，如果查詢詞是同義字，提示轉換
+                        let displayItemName = item['品名'];
+                        let queryInfo = '';
+
+                        if (query !== standardQuery) {
+                            queryInfo = ` (實際查詢：${standardQuery})`;
+                        }
+                        
+                        // 僅高亮顯示在 '品名' 中的關鍵字
+                        const regex = new RegExp(query, 'gi');
+                        displayItemName = displayItemName.replace(regex, (match) => `<span class="bg-yellow-200 font-semibold rounded px-1">${match}</span>`);
+
+
+                        row.innerHTML = `
+                            <td class="px-3 py-3 text-sm font-medium text-gray-900">${displayItemName}</td>
+                            <td class="px-3 py-3 text-xs text-gray-500">${item['分類']} / ${item['檔案']}</td>
+                            <td class="px-3 py-3 text-sm font-bold text-red-600">${item['熱量(kcal)']}</td>
+                            <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['蛋白質(g)'])}</td>
+                            <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['脂肪(g)'])}</td>
+                            <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['碳水化合物(g)'])}</td>
+                            <td class="px-3 py-3 text-sm text-gray-700">${item['鈉(mg)']}</td>
+                        `;
+                        resultsTbody.appendChild(row);
+                    });
+
+                    // 更新狀態文字
+                    statusText.innerHTML = `已找到 ${results.length} 筆結果。${queryInfo}`;
+                    resultsContainer.classList.remove('hidden');
+                    
+                } else {
+                    // 找不到結果
+                    statusText.textContent = `找不到與 "${query}" 相關的結果。${queryInfo}`;
+                    noResultsDiv.classList.remove('hidden');
+                }
+
+            } catch (error) {
+                console.error('Fetch error:', error);
+                statusText.textContent = `連線失敗，請檢查 API 網址或網路。`;
+                resultsContainer.classList.add('hidden');
+            }
+        }
+    </script>
+</body>
+</html>
