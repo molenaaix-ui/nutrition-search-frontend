@@ -3,8 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cloudflare 營養數據搜尋 (簡化版)</title>
-    <script src="[https://cdn.tailwindcss.com](https://cdn.tailwindcss.com)"></script>
+    <title>Cloudflare 營養數據搜尋</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 確保表格在小螢幕上可以捲動 */
+        .table-container {
+            overflow-x: auto;
+            max-height: 70vh; /* 限制表格最大高度，讓內容可以獨立捲動 */
+        }
+        /* 讓表頭固定 */
+        .table-container table {
+            border-collapse: collapse;
+        }
+        .table-container thead {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+    </style>
 </head>
 <body class="bg-gray-100 min-h-screen p-4 sm:p-8">
 
@@ -19,11 +35,26 @@
         
         <p id="status-text" class="text-gray-500 mb-4 text-sm">請輸入關鍵字進行搜尋 (例如：貝果、拿鐵)</p>
 
-        <div id="results-container" class="hidden">
-            <div id="results-list" class="space-y-2">
-            </div>
+        <div id="results-container" class="table-container shadow-md rounded-lg hidden">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-blue-600 text-white sticky top-0">
+                    <tr>
+                        <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">品名</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">分類/品牌</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">熱量(kcal)</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">蛋白質(g)</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">脂肪(g)</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">碳水(g)</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider">鈉(mg)</th>
+                    </tr>
+                </thead>
+                <tbody id="results-tbody" class="bg-white divide-y divide-gray-200">
+                    <!-- 搜尋結果會被添加到這裡 -->
+                </tbody>
+            </table>
         </div>
         
+        <!-- 載入更多按鈕 -->
         <div class="mt-4 text-center">
             <button id="load-more-btn"
                     onclick="loadMore()"
@@ -36,29 +67,32 @@
             <p class="text-xl font-semibold text-red-500">😭 找不到符合條件的商品。</p>
             <p class="text-gray-500 mt-2">請嘗試使用其他關鍵字，或檢查是否有錯別字。</p>
         </div>
+
     </div>
 
     <script>
-        const API_URL = '[https://nutrition-search-worker.food-data.workers.dev](https://nutrition-search-worker.food-data.workers.dev)'; 
+        // !! API 網址已替換為您部署的服務網址 !!
+        const API_URL = 'https://nutrition-search-worker.food-data.workers.dev'; 
         
         // --- 分頁與狀態管理 ---
         const ITEMS_PER_PAGE = 20;
-        let allResults = []; 
-        let currentStartIndex = 0; 
+        let allResults = []; // 儲存所有從 API 獲取的結果
+        let currentStartIndex = 0; // 目前顯示到第幾筆
         // -----------------------
 
         const searchInput = document.getElementById('search-input');
         const statusText = document.getElementById('status-text');
         const resultsContainer = document.getElementById('results-container');
-        const resultsList = document.getElementById('results-list'); // 新增清單容器
+        const resultsTbody = document.getElementById('results-tbody');
         const noResultsDiv = document.getElementById('no-results');
         const loadMoreBtn = document.getElementById('load-more-btn');
 
+        // 使用 Debounce (防抖) 優化搜尋
         let debounceTimeout;
         
         function performSearchDebounced() {
             clearTimeout(debounceTimeout);
-            debounceTimeout = setTimeout(performSearch, 300);
+            debounceTimeout = setTimeout(performSearch, 300); // 延遲 300ms 後執行
         }
         
         /**
@@ -73,7 +107,7 @@
                 resultsContainer.classList.add('hidden');
                 noResultsDiv.classList.add('hidden');
                 loadMoreBtn.classList.add('hidden');
-                resultsList.innerHTML = '';
+                resultsTbody.innerHTML = '';
                 return;
             }
 
@@ -81,7 +115,7 @@
             resultsContainer.classList.add('hidden');
             noResultsDiv.classList.add('hidden');
             loadMoreBtn.classList.add('hidden');
-            resultsList.innerHTML = ''; // 清空清單
+            resultsTbody.innerHTML = '';
             
             // 重置分頁狀態
             allResults = [];
@@ -93,11 +127,13 @@
                 const data = await response.json(); 
 
                 if (response.status !== 200) {
+                    // 捕獲 HTTP 錯誤，例如 400
                     statusText.textContent = `API 錯誤：HTTP ${response.status} - ${data.error || '無法連線到伺服器'}`;
                     return;
                 }
 
-                allResults = data.data;
+                // 正常處理 200 OK 的結果
+                allResults = data.data; // 將所有結果儲存到全域變數
                 const totalCount = allResults.length;
                 const standardQuery = data.standard_query;
                 
@@ -107,54 +143,70 @@
                         queryInfo = ` (實際查詢：${standardQuery})`;
                     }
 
-                    // 初始顯示第一頁
-                    resultsList.innerHTML = '';
+                    // 初始顯示第一頁 (或所有結果，如果少於 20 筆)
+                    resultsTbody.innerHTML = '';
                     renderResults(allResults, 0, ITEMS_PER_PAGE);
 
                     // 更新狀態文字
-                    statusText.innerHTML = `已找到 ${totalCount} 筆結果。目前顯示 ${Math.min(ITEMS_PER_PAGE, totalCount)} 筆。${queryInfo}`;
+                    statusText.innerHTML = `已找到 ${totalCount} 筆結果。${queryInfo}`;
                     resultsContainer.classList.remove('hidden');
                     
                     // 檢查是否需要顯示載入更多按鈕
                     updateLoadMoreButton();
                     
                 } else {
+                    // 找不到結果
                     statusText.textContent = `找不到與 "${query}" 相關的結果。${queryInfo}`;
                     noResultsDiv.classList.remove('hidden');
                 }
 
             } catch (error) {
-                console.error('Fetch error:', error);
+                console.error('Fetch error (網路或 JSON 解析錯誤):', error);
                 statusText.textContent = `連線失敗，請檢查 API 網址或網路。`;
                 resultsContainer.classList.add('hidden');
             }
         }
         
         /**
-         * 繪製結果到清單中 (只顯示 品名 [查看])
+         * 繪製結果到表格中
+         * @param {Array} items - 要繪製的數據陣列
+         * @param {number} start - 開始的索引
+         * @param {number} end - 結束的索引 (不包含)
          */
         function renderResults(items, start, end) {
             const itemsToRender = items.slice(start, end);
+            const standardQuery = allResults.standard_query || searchInput.value.trim();
             const query = searchInput.value.trim();
             
             itemsToRender.forEach(item => {
-                const div = document.createElement('div');
-                div.className = 'flex items-center justify-between p-2 bg-white border-b hover:bg-gray-50';
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-gray-50';
                 
+                // 處理數值，如果有小數位，保留一位，如果為 0 則顯示 '-'
+                const formatValue = (value) => {
+                    if (value === null || value === undefined || value === 0 || value === '0' || value === '') return '-';
+                    // 確保數值是有效的，並處理 0 或空值
+                    const num = parseFloat(value);
+                    if (isNaN(num)) return '-';
+                    if (num === 0) return '-';
+                    return num.toFixed(1);
+                };
+
                 // 處理高亮顯示
                 let displayItemName = item['品名'];
                 const regex = new RegExp(query, 'gi');
                 displayItemName = displayItemName.replace(regex, (match) => `<span class="bg-yellow-200 font-semibold rounded px-1">${match}</span>`);
 
-                // 建立 品名 [查看] 結構
-                div.innerHTML = `
-                    <span class="text-gray-900">${displayItemName}</span>
-                    <button class="text-blue-600 hover:text-blue-800 font-semibold ml-4" 
-                            onclick="showDetails('${item['品名']}', ${items.indexOf(item)})">
-                        [查看]
-                    </button>
+                row.innerHTML = `
+                    <td class="px-3 py-3 text-sm font-medium text-gray-900">${displayItemName}</td>
+                    <td class="px-3 py-3 text-xs text-gray-500">${item['分類']} / ${item['檔案']}</td>
+                    <td class="px-3 py-3 text-sm font-bold text-red-600">${item['熱量(kcal)']}</td>
+                    <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['蛋白質(g)'])}</td>
+                    <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['脂肪(g)'])}</td>
+                    <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['碳水化合物(g)'])}</td>
+                    <td class="px-3 py-3 text-sm text-gray-700">${item['鈉(mg)']}</td>
                 `;
-                resultsList.appendChild(div);
+                resultsTbody.appendChild(row);
             });
             
             // 更新目前顯示的索引
@@ -172,9 +224,12 @@
 
             // 更新按鈕狀態
             updateLoadMoreButton();
-            
-            // 更新狀態文字
-            statusText.innerHTML = `已找到 ${allResults.length} 筆結果。目前顯示 ${currentStartIndex} 筆。`;
+
+            // 平滑捲動到底部
+            resultsContainer.scrollTo({
+                top: resultsContainer.scrollHeight,
+                behavior: 'smooth'
+            });
         }
 
         /**
@@ -191,21 +246,12 @@
                 loadMoreBtn.classList.remove('hidden');
                 loadMoreBtn.disabled = false;
             } else {
-                // 全部載入完畢，顯示已載入所有結果
+                // 全部載入完畢，隱藏按鈕
                 loadMoreBtn.textContent = `已載入所有 ${totalCount} 筆結果`;
                 loadMoreBtn.disabled = true;
-                // 不再隱藏按鈕，而是保持禁用狀態
+                // 可以選擇隱藏或保持禁用狀態
+                // loadMoreBtn.classList.add('hidden'); 
             }
-        }
-        
-        /**
-         * 這是第二段查詢的預留功能 (目前只會彈出警告)
-         */
-        function showDetails(itemName, index) {
-            // alert(`將顯示 ${itemName} (索引: ${index}) 的詳細資訊...`);
-            // 在這個函數中，我們將實現第二段查詢，並傳入 allResults[index] 的詳細數據
-            // 目前，我們只需要確認第一段顯示正常。
-            alert(`已點擊：${itemName}。請進入下一步，我們將在這裡實現「詳細資訊」的顯示！`);
         }
     </script>
 </body>
