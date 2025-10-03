@@ -9,6 +9,16 @@
         /* 確保表格在小螢幕上可以捲動 */
         .table-container {
             overflow-x: auto;
+            max-height: 70vh; /* 限制表格最大高度，讓內容可以獨立捲動 */
+        }
+        /* 讓表頭固定 */
+        .table-container table {
+            border-collapse: collapse;
+        }
+        .table-container thead {
+            position: sticky;
+            top: 0;
+            z-index: 10;
         }
     </style>
 </head>
@@ -39,8 +49,18 @@
                     </tr>
                 </thead>
                 <tbody id="results-tbody" class="bg-white divide-y divide-gray-200">
-                    </tbody>
+                    <!-- 搜尋結果會被添加到這裡 -->
+                </tbody>
             </table>
+        </div>
+        
+        <!-- 載入更多按鈕 -->
+        <div class="mt-4 text-center">
+            <button id="load-more-btn"
+                    onclick="loadMore()"
+                    class="hidden px-6 py-2 bg-blue-500 text-white font-semibold rounded-lg hover:bg-blue-600 transition duration-150 shadow-md disabled:bg-gray-400 disabled:cursor-not-allowed">
+                載入更多 (尚餘 ?? 筆)
+            </button>
         </div>
 
         <div id="no-results" class="hidden text-center py-10">
@@ -51,15 +71,23 @@
     </div>
 
     <script>
-        // !! 請注意：API 網址已替換為您部署的服務網址 !!
+        // !! API 網址已替換為您部署的服務網址 !!
         const API_URL = 'https://nutrition-search-worker.food-data.workers.dev'; 
+        
+        // --- 分頁與狀態管理 ---
+        const ITEMS_PER_PAGE = 20;
+        let allResults = []; // 儲存所有從 API 獲取的結果
+        let currentStartIndex = 0; // 目前顯示到第幾筆
+        // -----------------------
+
         const searchInput = document.getElementById('search-input');
         const statusText = document.getElementById('status-text');
         const resultsContainer = document.getElementById('results-container');
         const resultsTbody = document.getElementById('results-tbody');
         const noResultsDiv = document.getElementById('no-results');
+        const loadMoreBtn = document.getElementById('load-more-btn');
 
-        // 使用 Debounce (防抖) 優化搜尋，避免使用者輸入過快導致過多 API 請求
+        // 使用 Debounce (防抖) 優化搜尋
         let debounceTimeout;
         
         function performSearchDebounced() {
@@ -67,17 +95,18 @@
             debounceTimeout = setTimeout(performSearch, 300); // 延遲 300ms 後執行
         }
         
+        /**
+         * 執行 API 搜尋並設定分頁狀態
+         */
         async function performSearch() {
             const query = searchInput.value.trim();
-
-            // 修正：在函式開頭定義並初始化 queryInfo 變數
             let queryInfo = '';
 
-            // 至少需要兩個字符才開始搜尋
             if (query.length < 2) {
                 statusText.textContent = '請輸入至少 2 個字符開始搜尋';
                 resultsContainer.classList.add('hidden');
                 noResultsDiv.classList.add('hidden');
+                loadMoreBtn.classList.add('hidden');
                 resultsTbody.innerHTML = '';
                 return;
             }
@@ -85,73 +114,45 @@
             statusText.textContent = `正在搜尋 "${query}"...`;
             resultsContainer.classList.add('hidden');
             noResultsDiv.classList.add('hidden');
+            loadMoreBtn.classList.add('hidden');
             resultsTbody.innerHTML = '';
+            
+            // 重置分頁狀態
+            allResults = [];
+            currentStartIndex = 0;
 
             try {
-                // *** 關鍵除錯點：發送前打印 URL ***
                 const url = `${API_URL}?q=${encodeURIComponent(query)}`;
-                console.log('--- API 請求 URL ---', url);
-                // **********************************
-
                 const response = await fetch(url);
-                
-                // 如果是 400 錯誤，Worker 應該會回傳一個包含錯誤訊息的 JSON
                 const data = await response.json(); 
 
                 if (response.status !== 200) {
-                    // 這裡會捕獲 400 錯誤
-                    console.error('API responded with non-200 status:', response.status, data);
+                    // 捕獲 HTTP 錯誤，例如 400
                     statusText.textContent = `API 錯誤：HTTP ${response.status} - ${data.error || '無法連線到伺服器'}`;
                     return;
                 }
 
                 // 正常處理 200 OK 的結果
-                const results = data.data;
+                allResults = data.data; // 將所有結果儲存到全域變數
+                const totalCount = allResults.length;
                 const standardQuery = data.standard_query;
                 
-                resultsTbody.innerHTML = ''; // 清空舊結果
-                
-                if (results.length > 0) {
-                    // 顯示結果
-                    results.forEach(item => {
-                        const row = document.createElement('tr');
-                        row.className = 'hover:bg-gray-50';
-                        
-                        // 處理數值，如果有小數位，保留一位，如果為 0 則顯示 '-'
-                        const formatValue = (value) => {
-                            // 確保數值是有效的，並處理 0 或空值
-                            if (value === null || value === undefined || value === 0 || value === '0' || value === '') return '-';
-                            return parseFloat(value).toFixed(1);
-                        };
+                if (totalCount > 0) {
+                    
+                    if (query !== standardQuery) {
+                        queryInfo = ` (實際查詢：${standardQuery})`;
+                    }
 
-                        // 處理品名，如果查詢詞是同義字，提示轉換
-                        let displayItemName = item['品名'];
-                        // queryInfo 在函式頂部已定義
-
-                        if (query !== standardQuery) {
-                            queryInfo = ` (實際查詢：${standardQuery})`;
-                        }
-                        
-                        // 僅高亮顯示在 '品名' 中的關鍵字
-                        const regex = new RegExp(query, 'gi');
-                        displayItemName = displayItemName.replace(regex, (match) => `<span class="bg-yellow-200 font-semibold rounded px-1">${match}</span>`);
-
-
-                        row.innerHTML = `
-                            <td class="px-3 py-3 text-sm font-medium text-gray-900">${displayItemName}</td>
-                            <td class="px-3 py-3 text-xs text-gray-500">${item['分類']} / ${item['檔案']}</td>
-                            <td class="px-3 py-3 text-sm font-bold text-red-600">${item['熱量(kcal)']}</td>
-                            <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['蛋白質(g)'])}</td>
-                            <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['脂肪(g)'])}</td>
-                            <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['碳水化合物(g)'])}</td>
-                            <td class="px-3 py-3 text-sm text-gray-700">${item['鈉(mg)']}</td>
-                        `;
-                        resultsTbody.appendChild(row);
-                    });
+                    // 初始顯示第一頁 (或所有結果，如果少於 20 筆)
+                    resultsTbody.innerHTML = '';
+                    renderResults(allResults, 0, ITEMS_PER_PAGE);
 
                     // 更新狀態文字
-                    statusText.innerHTML = `已找到 ${results.length} 筆結果。${queryInfo}`;
+                    statusText.innerHTML = `已找到 ${totalCount} 筆結果。${queryInfo}`;
                     resultsContainer.classList.remove('hidden');
+                    
+                    // 檢查是否需要顯示載入更多按鈕
+                    updateLoadMoreButton();
                     
                 } else {
                     // 找不到結果
@@ -161,9 +162,95 @@
 
             } catch (error) {
                 console.error('Fetch error (網路或 JSON 解析錯誤):', error);
-                // 即使是 400 錯誤，fetch 本身不會失敗，但如果 Worker 回傳的 JSON 格式有問題，才會進到這裡
                 statusText.textContent = `連線失敗，請檢查 API 網址或網路。`;
                 resultsContainer.classList.add('hidden');
+            }
+        }
+        
+        /**
+         * 繪製結果到表格中
+         * @param {Array} items - 要繪製的數據陣列
+         * @param {number} start - 開始的索引
+         * @param {number} end - 結束的索引 (不包含)
+         */
+        function renderResults(items, start, end) {
+            const itemsToRender = items.slice(start, end);
+            const standardQuery = allResults.standard_query || searchInput.value.trim();
+            const query = searchInput.value.trim();
+            
+            itemsToRender.forEach(item => {
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-gray-50';
+                
+                // 處理數值，如果有小數位，保留一位，如果為 0 則顯示 '-'
+                const formatValue = (value) => {
+                    if (value === null || value === undefined || value === 0 || value === '0' || value === '') return '-';
+                    // 確保數值是有效的，並處理 0 或空值
+                    const num = parseFloat(value);
+                    if (isNaN(num)) return '-';
+                    if (num === 0) return '-';
+                    return num.toFixed(1);
+                };
+
+                // 處理高亮顯示
+                let displayItemName = item['品名'];
+                const regex = new RegExp(query, 'gi');
+                displayItemName = displayItemName.replace(regex, (match) => `<span class="bg-yellow-200 font-semibold rounded px-1">${match}</span>`);
+
+                row.innerHTML = `
+                    <td class="px-3 py-3 text-sm font-medium text-gray-900">${displayItemName}</td>
+                    <td class="px-3 py-3 text-xs text-gray-500">${item['分類']} / ${item['檔案']}</td>
+                    <td class="px-3 py-3 text-sm font-bold text-red-600">${item['熱量(kcal)']}</td>
+                    <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['蛋白質(g)'])}</td>
+                    <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['脂肪(g)'])}</td>
+                    <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['碳水化合物(g)'])}</td>
+                    <td class="px-3 py-3 text-sm text-gray-700">${item['鈉(mg)']}</td>
+                `;
+                resultsTbody.appendChild(row);
+            });
+            
+            // 更新目前顯示的索引
+            currentStartIndex = end;
+        }
+
+        /**
+         * 處理「載入更多」按鈕點擊事件
+         */
+        function loadMore() {
+            const nextEndIndex = currentStartIndex + ITEMS_PER_PAGE;
+            
+            // 繪製下一批結果
+            renderResults(allResults, currentStartIndex, nextEndIndex);
+
+            // 更新按鈕狀態
+            updateLoadMoreButton();
+
+            // 平滑捲動到底部
+            resultsContainer.scrollTo({
+                top: resultsContainer.scrollHeight,
+                behavior: 'smooth'
+            });
+        }
+
+        /**
+         * 根據目前狀態更新載入更多按鈕的文字和可見性
+         */
+        function updateLoadMoreButton() {
+            const totalCount = allResults.length;
+            const itemsShown = currentStartIndex;
+            const remainingCount = totalCount - itemsShown;
+
+            if (remainingCount > 0) {
+                // 尚有餘額，顯示按鈕
+                loadMoreBtn.textContent = `載入更多 (尚餘 ${remainingCount} 筆)`;
+                loadMoreBtn.classList.remove('hidden');
+                loadMoreBtn.disabled = false;
+            } else {
+                // 全部載入完畢，隱藏按鈕
+                loadMoreBtn.textContent = `已載入所有 ${totalCount} 筆結果`;
+                loadMoreBtn.disabled = true;
+                // 可以選擇隱藏或保持禁用狀態
+                // loadMoreBtn.classList.add('hidden'); 
             }
         }
     </script>
