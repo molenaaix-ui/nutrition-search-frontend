@@ -10,6 +10,16 @@
         .details-table-container {
             overflow-x: auto;
         }
+        /* 突出顯示可編輯的重量輸入框 */
+        .weight-input {
+            width: 80px; /* 限制寬度 */
+            text-align: right;
+            border: 1px solid #3b82f6; /* 藍色邊框 */
+            border-radius: 4px;
+            padding: 2px 4px;
+            font-weight: bold;
+            background-color: #eff6ff; /* 淺藍色背景 */
+        }
     </style>
 </head>
 <body class="bg-gray-100 min-h-screen p-4 sm:p-8">
@@ -82,10 +92,11 @@
     <script>
         const API_URL = 'https://nutrition-search-worker.food-data.workers.dev'; 
         
-        // --- 分頁與狀態管理 ---
+        // --- 狀態管理 ---
         const ITEMS_PER_PAGE = 20;
         let allResults = []; 
         let currentStartIndex = 0; 
+        let originalItemData = {}; // 儲存該筆資料的原始營養數據和每 g 價值
         // -----------------------
 
         const searchInput = document.getElementById('search-input');
@@ -95,7 +106,6 @@
         const noResultsDiv = document.getElementById('no-results');
         const loadMoreBtn = document.getElementById('load-more-btn');
         
-        // --- 第二段查詢 DOM 元素 ---
         const detailsContainer = document.getElementById('details-container');
         const detailsItemName = document.getElementById('details-item-name');
         const detailsTbody = document.getElementById('details-tbody');
@@ -108,11 +118,8 @@
             debounceTimeout = setTimeout(performSearch, 300); 
         }
         
-        // 確保在每次新的搜尋開始前，隱藏詳細資訊
         function prepareNewSearch() {
-            // 隱藏第二段
             detailsContainer.classList.add('hidden');
-            // 清空第一段
             resultsContainer.classList.add('hidden');
             noResultsDiv.classList.add('hidden');
             loadMoreBtn.classList.add('hidden');
@@ -130,7 +137,7 @@
                 return;
             }
 
-            prepareNewSearch(); // 每次開始新搜尋前執行清空
+            prepareNewSearch(); 
             statusText.textContent = `正在搜尋 "${query}"...`;
 
             try {
@@ -186,7 +193,6 @@
                 const regex = new RegExp(query, 'gi');
                 displayItemName = displayItemName.replace(regex, (match) => `<span class="bg-yellow-200 font-semibold rounded px-1">${match}</span>`);
 
-                // 傳遞 item 索引，供 showDetails 使用
                 const itemIndex = allResults.indexOf(item); 
 
                 div.innerHTML = `
@@ -203,10 +209,14 @@
         }
 
         // --- 第二段功能實作 ---
+        
+        const NUTRITION_KEYS = [
+            '熱量(kcal)', '蛋白質(g)', '脂肪(g)', '飽和脂肪(g)', 
+            '反式脂肪(g)', '碳水化合物(g)', '糖(g)', '鈉(mg)'
+        ];
 
         /**
          * 顯示詳細資訊表格 (第二段)
-         * @param {number} index - 該項目在 allResults 中的索引
          */
         function showDetails(index) {
             const item = allResults[index];
@@ -225,40 +235,104 @@
             // 設置標題
             detailsItemName.textContent = item['品名'];
             
-            // 處理數值格式
-            const formatValue = (value) => {
-                const num = parseFloat(value);
-                if (isNaN(num) || num === 0) return '-';
-                return num.toFixed(1);
+            // 計算原始每 g 數據並儲存
+            const originalWeight = parseFloat(item['重量(g)']) || 0;
+            originalItemData = {
+                item, // 完整的原始資料
+                originalWeight: originalWeight
             };
+            
+            // 儲存每 g 的價值
+            if (originalWeight > 0) {
+                NUTRITION_KEYS.forEach(key => {
+                    originalItemData[key + '_per_g'] = (parseFloat(item[key]) || 0) / originalWeight;
+                });
+            }
 
             // 繪製詳細表格行
             const row = document.createElement('tr');
             row.className = 'bg-white hover:bg-gray-50';
 
             row.innerHTML = `
-                <td class="px-3 py-3 text-sm font-medium text-gray-900">${item['品名']}</td>
-                <td class="px-3 py-3 text-sm text-gray-500">${item['備註'] || '-'}</td>
-                <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['重量(g)'])}</td>
-                <td class="px-3 py-3 text-sm font-bold text-red-600">${formatValue(item['熱量(kcal)'])}</td>
-                <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['蛋白質(g)'])}</td>
-                <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['脂肪(g)'])}</td>
-                <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['飽和脂肪(g)'])}</td>
-                <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['反式脂肪(g)'])}</td>
-                <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['碳水化合物(g)'])}</td>
-                <td class="px-3 py-3 text-sm text-gray-700">${formatValue(item['糖(g)'])}</td>
-                <td class="px-3 py-3 text-sm text-gray-700">${item['鈉(mg)']}</td>
+                <td class="px-3 py-3 text-sm font-medium text-gray-900" data-key="品名">${item['品名']}</td>
+                <td class="px-3 py-3 text-sm text-gray-500" data-key="備註">${item['備註'] || '-'}</td>
+                
+                <td class="px-3 py-3 text-sm text-gray-700">
+                    <input type="number" 
+                           step="0.1" 
+                           min="0" 
+                           id="weight-input-field"
+                           value="${originalWeight.toFixed(1)}" 
+                           class="weight-input"
+                           oninput="recalculateNutrition(event)">
+                </td>
+                
+                <td class="px-3 py-3 text-sm font-bold text-red-600" data-key="熱量(kcal)"></td>
+                <td class="px-3 py-3 text-sm text-gray-700" data-key="蛋白質(g)"></td>
+                <td class="px-3 py-3 text-sm text-gray-700" data-key="脂肪(g)"></td>
+                <td class="px-3 py-3 text-sm text-gray-700" data-key="飽和脂肪(g)"></td>
+                <td class="px-3 py-3 text-sm text-gray-700" data-key="反式脂肪(g)"></td>
+                <td class="px-3 py-3 text-sm text-gray-700" data-key="碳水化合物(g)"></td>
+                <td class="px-3 py-3 text-sm text-gray-700" data-key="糖(g)"></td>
+                <td class="px-3 py-3 text-sm text-gray-700" data-key="鈉(mg)"></td>
+                
                 <td class="px-3 py-3 text-sm">
                     <button class="text-blue-600 hover:text-blue-800 font-semibold" 
-                            onclick="copyData(${index})">
+                            onclick="copyData()">
                         [複製]
                     </button>
                 </td>
             `;
             detailsTbody.appendChild(row);
 
-            // 捲動到頂部
+            // 初始載入時，先執行一次計算以填充數據
+            recalculateNutrition({ target: document.getElementById('weight-input-field') });
+
             window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+        
+        /**
+         * 根據新的重量重新計算並更新營養數據
+         * @param {Event} event - input 事件
+         */
+        function recalculateNutrition(event) {
+            const inputElement = event.target;
+            let newWeight = parseFloat(inputElement.value);
+
+            // 確保重量為有效數字，如果無效則設為 0
+            if (isNaN(newWeight) || newWeight < 0) {
+                newWeight = 0;
+            }
+            
+            // 更新輸入框的值，確保只保留一位小數 (如果不是整數)
+            if (inputElement.value !== newWeight.toString()) {
+                 inputElement.value = newWeight.toFixed(1);
+            }
+
+            const row = inputElement.closest('tr');
+
+            NUTRITION_KEYS.forEach(key => {
+                const perGValue = originalItemData[key + '_per_g'];
+                let newValue;
+                
+                if (key === '鈉(mg)') {
+                    // 鈉(mg) 保持整數顯示，但計算仍需使用 perG
+                    newValue = (perGValue * newWeight);
+                    // 由於鈉(mg)在您提供的範例中是整數，這裡我們使用 Math.round 或 toFixed(0)
+                    row.querySelector(`[data-key="${key}"]`).textContent = Math.round(newValue) || '-';
+                } else {
+                    // 其他營養成分保留一位小數
+                    newValue = perGValue * newWeight;
+                    
+                    const formatValue = (val) => {
+                        if (val === null || val === undefined || val <= 0) return '-';
+                        // 依照您的範例，我們保留一位小數
+                        return val.toFixed(1); 
+                    };
+
+                    row.querySelector(`[data-key="${key}"]`).textContent = formatValue(newValue);
+                }
+            });
         }
         
         /**
@@ -268,57 +342,70 @@
             detailsContainer.classList.add('hidden');
             resultsContainer.classList.remove('hidden');
             
-            // 恢復顯示載入更多按鈕 (如果需要)
             updateLoadMoreButton(); 
-            
-            // 捲動到頂部
             window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
 
         /**
          * 處理資料複製到剪貼簿的功能
-         * @param {number} index - 該項目在 allResults 中的索引
          */
-        function copyData(index) {
-            const item = allResults[index];
-            if (!item) return;
+        function copyData() {
+            const item = originalItemData.item;
+            const inputElement = document.getElementById('weight-input-field');
+            const newWeight = parseFloat(inputElement.value) || 0;
             
-            const formatValue = (value) => {
-                const num = parseFloat(value);
-                // 使用 toFixed(1) 保留一位小數，或使用原始字串如果無效
-                return isNaN(num) ? '' : num.toFixed(1);
-            };
+            if (newWeight <= 0) {
+                alert('重量無效，無法複製。');
+                return;
+            }
 
-            // 格式: 品名\t重量(g)\t熱量(kcal)\t...
+            // 使用原始每 g 數據重新計算一次，確保複製的數據與畫面上的一致
+            const calculatedValues = NUTRITION_KEYS.map(key => {
+                const perGValue = originalItemData[key + '_per_g'];
+                const value = perGValue * newWeight;
+                
+                if (key === '鈉(mg)') {
+                    // 鈉(mg) 使用整數
+                    return Math.round(value);
+                } else {
+                    // 其他數據保留一位小數
+                    return value.toFixed(1);
+                }
+            });
+
+            // 格式: 品名\t重量(g)\t熱量(kcal)\t蛋白質(g)\t...
             const dataToCopy = [
                 item['品名'],
-                formatValue(item['重量(g)']),
-                formatValue(item['熱量(kcal)']),
-                formatValue(item['蛋白質(g)']),
-                formatValue(item['脂肪(g)']),
-                formatValue(item['飽和脂肪(g)']),
-                formatValue(item['反式脂肪(g)']),
-                formatValue(item['碳水化合物(g)']),
-                formatValue(item['糖(g)']),
-                item['鈉(mg)'] // 鈉(mg) 通常是整數，但如果 API 回傳字串就保留
-            ].join('\t'); // 使用 Tab 符號分隔，適用於 Excel
+                newWeight.toFixed(1), // 使用新的重量
+                ...calculatedValues.slice(0, 9) // 排除鈉(mg)
+            ];
+
+            // 檢查您的 Excel 格式要求：
+            // 【品名】\t重量\t熱量\t蛋白質\t脂肪\t飽和脂肪\t反式脂肪\t碳水化合物\t糖\t鈉
+            // 由於 calculatedValues 包含 8 個營養素 (熱量到鈉)，總共 10 個欄位
+
+            const finalDataToCopy = [
+                 item['品名'],
+                 newWeight.toFixed(1),
+                 ...calculatedValues
+            ];
+            
+            const tabSeparatedData = finalDataToCopy.join('\t');
 
             // 複製到剪貼簿
-            navigator.clipboard.writeText(dataToCopy).then(() => {
+            navigator.clipboard.writeText(tabSeparatedData).then(() => {
                 copyStatus.classList.remove('hidden');
                 setTimeout(() => {
                     copyStatus.classList.add('hidden');
-                }, 3000); // 3 秒後隱藏提示
+                }, 3000); 
             }).catch(err => {
                 console.error('複製失敗:', err);
-                alert('複製失敗，請檢查瀏覽器權限或手動複製：\n\n' + dataToCopy);
+                alert('複製失敗，請檢查瀏覽器權限或手動複製：\n\n' + tabSeparatedData);
             });
         }
         
-        // 保留 loadMore 和 updateLoadMoreButton，邏輯不變
         function loadMore() {
-            // ... (與您提供的程式碼邏輯相同，用於載入下一批結果)
             const nextEndIndex = currentStartIndex + ITEMS_PER_PAGE;
             renderResults(allResults, currentStartIndex, nextEndIndex);
             updateLoadMoreButton();
@@ -330,7 +417,6 @@
         }
 
         function updateLoadMoreButton() {
-            // ... (與您提供的程式碼邏輯相同，用於更新按鈕狀態)
             const totalCount = allResults.length;
             const itemsShown = currentStartIndex;
             const remainingCount = totalCount - itemsShown;
