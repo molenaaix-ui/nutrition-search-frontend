@@ -282,16 +282,18 @@
             const div = document.createElement('div');
             div.className = 'flex items-center justify-between p-2 hover:bg-gray-100 border-b last:border-b-0';
             
-            let displayItemName = item['品名'];
-            // 顯示結果清單時，只將包含的詞彙高亮顯示
-            const highlightQuery = query.replace(/-\s*?"[^"]+"/g, '').trim(); // 移除排除項
-            
-            if (highlightQuery) {
-                // 將所有空格替換為 |，以便正則表達式能匹配多個詞彙 (A|B)
-                const regexString = highlightQuery.split(/\s+/).filter(t => t.length > 0).join('|');
-                try {
-                     const regex = new RegExp(`(${regexString})`, 'gi');
-                     displayItemName = displayItemName.replace(regex, (match) => `<span class="bg-yellow-200 font-semibold rounded px-1">${match}</span>`);
+            let displayItemName = item['品名'];
+            // 顯示結果清單時，只將包含的詞彙高亮顯示
+            const highlightQuery = query.replace(/-\s*?"[^"]+"/g, '').trim(); // 移除排除項
+            
+            if (highlightQuery) {
+                // 將所有空格替換為 |，以便正則表達式能匹配多個詞彙 (A|B)
+                const regexString = highlightQuery.split(/\s+/).filter(t => t.length > 0).join('|');
+                try {
+                     // 確保正規表達式使用全局 (g) 和忽略大小寫 (i) 
+                     const regex = new RegExp(`(${regexString})`, 'gi');
+                     displayItemName = displayItemName.replace(regex, (match) => `<span class="bg-yellow-200 font-semibold rounded px-1">${match}</span>`);
+
                 } catch (e) {
                     // 如果正則表達式無效（例如用戶輸入了特殊符號），則不進行高亮
                     console.warn("Highlight regex error:", e);
