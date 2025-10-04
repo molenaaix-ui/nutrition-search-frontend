@@ -129,100 +129,140 @@
         currentStartIndex = 0;
     }
 
-    /**
-     * 【核心變動】解析並執行進階搜尋
-     */
-    async function performSearch() {
-        const rawQuery = searchInput.value.trim();
-        if (rawQuery.length < 2) {
-            prepareNewSearch();
-            statusText.textContent = '請輸入至少 2 個字符開始搜尋';
-            return;
-        }
 
-        prepareNewSearch(); 
-        statusText.textContent = `正在搜尋 "${rawQuery}"...`;
 
-        // --- 1. 解析進階查詢 ---
-        const includeTerms = []; // 必須包含的詞彙 (A B)
-        const excludeTerms = []; // 必須排除的詞彙 (B)
 
-        // 使用正則表達式來查找並分離排除項 ("-""開頭且後面跟著引號的詞彙)
-        const excludeRegex = /-"([^"]+)"/g;
-        let match;
-        let processedQuery = rawQuery;
+/**
+     * 【新版】將包含項改為 OR 查詢 (用 | 連接)，並在前端執行 AND 篩選
+     */
+    async function performSearch() {
+        const rawQuery = searchInput.value.trim();
+        if (rawQuery.length < 2) {
+            prepareNewSearch();
+            statusText.textContent = '請輸入至少 2 個字符開始搜尋';
+            return;
+        }
 
-        while ((match = excludeRegex.exec(rawQuery)) !== null) {
-            // match[1] 是引號內的排除詞彙 (B)
-            excludeTerms.push(match[1].trim());
-            // 從查詢字串中移除這個排除模式
-            processedQuery = processedQuery.replace(match[0], ' ');
-        }
-        
-        // 剩下的部分按空格分割，作為必須包含的詞彙 (A, B)
-        processedQuery.split(/\s+/).filter(t => t.length > 0).forEach(term => {
-            // 由於您的 API 可能是基於單一查詢字串的，我們將所有包含項合併
-            // 確保不會重複添加
-            if (!includeTerms.includes(term)) {
-                includeTerms.push(term);
-            }
-        });
+        prepareNewSearch(); 
+        statusText.textContent = `正在搜尋 "${rawQuery}"...`;
 
-        // 構造最終的 API 查詢字串 (例如：A B -C)
-        let finalApiQuery = includeTerms.join(' ');
-        
-        // 將排除項重新加入到查詢字串的末尾，並用 '-' 號前綴 (API 搜尋引擎標準)
-        excludeTerms.forEach(term => {
-            finalApiQuery += ` -${term}`;
-        });
-        
-        finalApiQuery = finalApiQuery.trim();
+        // --- 1. 解析查詢 ---
+        const includeTerms = []; // 必須包含的詞彙 (A B)
+        const excludeTerms = []; // 必須排除的詞彙 (B)
 
-        if (finalApiQuery === '') {
-            statusText.textContent = '查詢字串無效或僅包含無效排除項。';
-            return;
-        }
-        // -----------------------
-        
-        try {
-            // 使用 finalApiQuery 構造 URL
-            const url = `${API_URL}?q=${encodeURIComponent(finalApiQuery)}`;
-            const response = await fetch(url);
-            const data = await response.json(); 
+        // 1.1 找出並移除排除項 ("-""開頭且後面跟著引號的詞彙)
+        const excludeRegex = /-"([^"]+)"/g;
+        let match;
+        let processedQuery = rawQuery;
 
-            if (response.status !== 200) {
-                statusText.textContent = `API 錯誤：HTTP ${response.status} - ${data.error || '無法連線到伺服器'}`;
-                return;
-            }
+        while ((match = excludeRegex.exec(rawQuery)) !== null) {
+            excludeTerms.push(match[1].trim().toLowerCase()); // 轉小寫以利篩選
+            processedQuery = processedQuery.replace(match[0], ' ');
+        }
+        
+        // 1.2 處理包含項
+        processedQuery.split(/\s+/).filter(t => t.length > 0).forEach(term => {
+            if (!includeTerms.includes(term)) {
+                includeTerms.push(term);
+            }
+        });
 
-            allResults = data.data; 
-            const totalCount = allResults.length;
-            const standardQuery = data.standard_query;
-            
-            if (totalCount > 0) {
-                let queryInfo = (rawQuery !== standardQuery && standardQuery) ? ` (實際查詢：${standardQuery})` : '';
+        // 1.3 構造 API 查詢: 將包含項改為 OR 查詢 (用 | 連接)
+        // 這樣 API 就能返回包含任一關鍵字的所有結果
+        let apiQueryForOR = includeTerms.join('|');
+        
+        // 1.4 將排除項加入 API 查詢 (API 仍執行排除邏輯)
+        excludeTerms.forEach(term => {
+            apiQueryForOR += ` -${term}`;
+        });
+        
+        apiQueryForOR = apiQueryForOR.trim();
 
-                resultsList.innerHTML = ''; 
-                renderResults(allResults, 0, ITEMS_PER_PAGE);
+        if (apiQueryForOR === '') {
+            statusText.textContent = '查詢字串無效或僅包含無效排除項。';
+            return;
+        }
+        // -----------------------
+        
+        try {
+            // 呼叫 API，此時 API 會返回包含 "貝果" 或 "起司" 的所有結果 (不包含排除項)
+            const url = `${API_URL}?q=${encodeURIComponent(apiQueryForOR)}`;
+            const response = await fetch(url);
+            const data = await response.json(); 
 
-                const itemsShown = Math.min(ITEMS_PER_PAGE, totalCount);
-                statusText.innerHTML = `已找到 ${totalCount} 筆結果。目前顯示 ${itemsShown} 筆。${queryInfo}`;
-                resultsContainer.classList.remove('hidden');
-                
-                updateLoadMoreButton();
-            } else {
-                let queryInfo = (data.standard_query && rawQuery !== data.standard_query) ? ` (實際查詢：${data.standard_query})` : '';
-                statusText.textContent = `找不到與 "${rawQuery}" 相關的結果。${queryInfo}`;
-                noResultsDiv.classList.remove('hidden');
-            }
+            if (response.status !== 200) {
+                statusText.textContent = `API 錯誤：HTTP ${response.status} - ${data.error || '無法連線到伺服器'}`;
+                return;
+            }
 
-        } catch (error) {
-            console.error('Fetch error (網路或 JSON 解析錯誤):', error);
-            statusText.textContent = `連線失敗，請檢查 API 網址或網路。`;
-            resultsContainer.classList.add('hidden');
-        }
-    }
+            let filteredResults = data.data; 
+            
+            // --- 2. 前端執行 AND 篩選 (只保留同時包含所有 includeTerms 的結果) ---
+            if (includeTerms.length > 1) {
+                const searchTermsLower = includeTerms.map(t => t.toLowerCase());
+                filteredResults = data.data.filter(item => {
+                    const itemNameLower = item['品名'].toLowerCase();
+                    // 確保商品名稱包含所有 includeTerms
+                    return searchTermsLower.every(term => itemNameLower.includes(term));
+                });
+            }
+            // -------------------------------------------------------------
+
+            allResults = filteredResults; 
+            const totalCount = allResults.length;
+            const standardQuery = data.standard_query;
+            
+            if (totalCount > 0) {
+                // 由於我們在前端執行了 AND 篩選，這裡的 standardQuery 可能會讓人困惑，
+                // 為了簡潔，我們只在結果數量少於 API 返回的數量時顯示篩選資訊
+                const initialCount = data.data.length;
+                let queryInfo = (initialCount !== totalCount) ? ` (已從 ${initialCount} 筆中篩選)` : '';
+                
+                resultsList.innerHTML = ''; 
+                renderResults(allResults, 0, ITEMS_PER_PAGE);
+
+                const itemsShown = Math.min(ITEMS_PER_PAGE, totalCount);
+                statusText.innerHTML = `已找到 ${totalCount} 筆結果。目前顯示 ${itemsShown} 筆。${queryInfo}`;
+                resultsContainer.classList.remove('hidden');
+                
+                updateLoadMoreButton();
+            } else {
+                statusText.textContent = `找不到與 "${rawQuery}" 相關的結果。`;
+                noResultsDiv.classList.remove('hidden');
+            }
+
+        } catch (error) {
+            console.error('Fetch error (網路或 JSON 解析錯誤):', error);
+            statusText.textContent = `連線失敗，請檢查 API 網址或網路。`;
+            resultsContainer.classList.add('hidden');
+        }
+    }
+
+
+
+
     
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     // --- (以下是所有先前實現的輔助函式，未變動) ---
 
     /**
