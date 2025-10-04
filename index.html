@@ -134,28 +134,39 @@
 
 
 
+// 定義一個輔助函式，用於從結果陣列中移除重複項目
+    function deduplicateResults(results) {
+        const seenNames = new Set();
+        return results.filter(item => {
+            const name = item['品名']; // 假設品名是唯一的識別碼
+            if (seenNames.has(name)) {
+                return false;
+            }
+            seenNames.add(name);
+            return true;
+        });
+    }
 
-
-/**
-     * 【最終修正版】將包含項用 OR 邏輯 ( | ) 傳給 API (提高廣度)，
-     *   並在前端對所有結果執行嚴格的 AND 篩選 (確保準度)。
+    /**
+     * 【多重 API 呼叫版】將多關鍵字拆分為單關鍵字分別查詢，
+     *   在前端合併所有結果，再執行嚴格的 AND 篩選。
      */
     async function performSearch() {
         const rawQuery = searchInput.value.trim();
+        // ... (長度檢查省略)
         if (rawQuery.length < 2) {
-            prepareNewSearch();
-            statusText.textContent = '請輸入至少 2 個字符開始搜尋';
-            return;
-        }
+            prepareNewSearch();
+            statusText.textContent = '請輸入至少 2 個字符開始搜尋';
+            return;
+        }
 
         prepareNewSearch(); 
         statusText.textContent = `正在搜尋 "${rawQuery}"...`;
 
         // --- 1. 解析查詢：分離包含項和排除項 ---
         const includeTerms = []; 
-        const excludeTerms = []; 
+        const excludeTerms = []; // 排除項仍可直接加入單一 API 查詢
 
-        // 1.1 找出並移除排除項 ("-""開頭且後面跟著引號的詞彙)
         const excludeRegex = /-"([^"]+)"/g;
         let match;
         let queryForInclusion = rawQuery;
@@ -165,63 +176,75 @@
             queryForInclusion = queryForInclusion.replace(match[0], ' '); 
         }
         
-        // 1.2 處理包含項
+        // 1.2 處理包含項：現在它們是單獨的 API 呼叫目標
         queryForInclusion.split(/\s+/).filter(t => t.length > 0).forEach(term => {
             if (!includeTerms.includes(term)) {
                 includeTerms.push(term);
             }
         });
-
-        if (includeTerms.length === 0 && excludeTerms.length === 0) {
+        
+        if (includeTerms.length === 0) {
             statusText.textContent = '查詢字串無效。';
             return;
         }
 
-        // 1.3 構造 API 查詢: 使用 OR 邏輯 ( | )
-        let finalApiQuery = includeTerms.join('|');
-        
-        // 將排除項重新加入到 API 查詢的末尾，並用 '-' 號前綴
-        excludeTerms.forEach(term => {
-            finalApiQuery += ` -"${term}"`; 
-        });
-        
-        finalApiQuery = finalApiQuery.trim();
+        // --- 2. 多次 API 呼叫 ---
+        let allApiResults = [];
+        let totalInitialCount = 0;
+        
+        // 排除項字串 (適用於每次 API 呼叫)
+        const excludeQueryPart = excludeTerms.map(term => ` -"${term}"`).join('');
 
-        // --- 2. 執行 API 查詢並獲取結果 ---
-        try {
-            // 呼叫 API，此時 API 會返回包含 "貝果" 或 "起司" 的所有結果
-            const url = `${API_URL}?q=${encodeURIComponent(finalApiQuery)}`;
-            console.log("API 廣泛查詢 URL:", url); // 確認 URL 變成 OR 模式 (e.g. q=貝果|起司)
-            
-            const response = await fetch(url);
-            const data = await response.json(); 
+        try {
+            // 針對每個包含項，分別進行一次 API 呼叫
+            const fetchPromises = includeTerms.map(async term => {
+                // 每個查詢都是單關鍵字 + 排除項
+                const singleApiQuery = `${term}${excludeQueryPart}`;
+                const url = `${API_URL}?q=${encodeURIComponent(singleApiQuery)}`;
+                console.log(`單獨 API 查詢 URL: ${url}`);
+                
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if (response.status === 200 && data.data) {
+                    return data.data; // 返回該次查詢的結果陣列
+                }
+                return [];
+            });
 
-            if (response.status !== 200) {
-                statusText.textContent = `API 錯誤：HTTP ${response.status} - ${data.error || '無法連線到伺服器'}`;
-                return;
-            }
+            // 等待所有 API 呼叫完成
+            const resultsArrays = await Promise.all(fetchPromises);
+            
+            // 合併所有結果並計算總數
+            resultsArrays.forEach(arr => {
+                totalInitialCount += arr.length;
+                allApiResults.push(...arr);
+            });
 
-            let filteredResults = data.data; 
-            const initialCount = data.data.length; // API 返回的未篩選筆數
-            
-            // --- 3. 前端執行嚴格的 AND 篩選 (解決 API 嚴苛 AND 的問題) ---
+            // 移除合併結果中的重複項目
+            allApiResults = deduplicateResults(allApiResults);
+            
+            let filteredResults = allApiResults; 
+
+            // --- 3. 前端執行嚴格的 AND 篩選 ---
             if (includeTerms.length > 1) {
-                // 將所有包含項轉為小寫
                 const searchTermsLower = includeTerms.map(t => t.toLowerCase());
                 
-                filteredResults = data.data.filter(item => {
+                filteredResults = allApiResults.filter(item => {
                     const itemNameLower = item['品名'].toLowerCase();
                     // 確保品名同時包含所有關鍵詞
                     return searchTermsLower.every(term => itemNameLower.includes(term));
                 });
             }
-            // -------------------------------------------------------------
+            // ------------------------------------
 
             allResults = filteredResults; 
             const totalCount = allResults.length;
             
             if (totalCount > 0) {
-                let queryInfo = (initialCount !== totalCount) ? ` (已從 ${initialCount} 筆中篩選)` : '';
+                // 計算篩選資訊（總共從多少筆不重複的結果中篩選）
+                const finalInitialCount = allApiResults.length;
+                let queryInfo = (finalInitialCount !== totalCount) ? ` (已從 ${finalInitialCount} 筆不重複結果中篩選)` : '';
                 
                 resultsList.innerHTML = ''; 
                 renderResults(allResults, 0, ITEMS_PER_PAGE);
@@ -242,6 +265,7 @@
             resultsContainer.classList.add('hidden');
         }
     }
+
 
 
 
