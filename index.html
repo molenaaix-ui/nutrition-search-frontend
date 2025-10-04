@@ -129,8 +129,16 @@
         currentStartIndex = 0;
     }
 
+
+
+
+
+
+
+
 /**
-     * 【新版】將包含項改為 OR 查詢 (用 | 連接)，並在前端執行 AND 篩選
+     * 【最終版】將包含項用空格連接 (讓 API 盡力返回所有相關結果)，
+     *   並在前端對所有結果執行嚴格的 AND 篩選。
      */
     async function performSearch() {
         const rawQuery = searchInput.value.trim();
@@ -147,43 +155,43 @@
         const includeTerms = []; // 必須包含的詞彙 (A B)
         const excludeTerms = []; // 必須排除的詞彙 (B)
 
-        // 1.1 找出並移除排除項 ("-""開頭且後面跟著引號的詞彙)
+        // 1.1 找出並移除排除項
         const excludeRegex = /-"([^"]+)"/g;
         let match;
-        let processedQuery = rawQuery;
+        let queryForApi = rawQuery; // 使用一個新的變數來構建 API 查詢
 
         while ((match = excludeRegex.exec(rawQuery)) !== null) {
-            excludeTerms.push(match[1].trim().toLowerCase()); // 轉小寫以利篩選
-            processedQuery = processedQuery.replace(match[0], ' ');
+            // 排除項用於 API 查詢
+            excludeTerms.push(match[1].trim()); 
+            queryForApi = queryForApi.replace(match[0], ' '); // 從 API 查詢字串中移除
         }
         
-        // 1.2 處理包含項
-        processedQuery.split(/\s+/).filter(t => t.length > 0).forEach(term => {
+        // 1.2 處理包含項：它們是用於前端 AND 篩選的關鍵詞
+        queryForApi.split(/\s+/).filter(t => t.length > 0).forEach(term => {
             if (!includeTerms.includes(term)) {
                 includeTerms.push(term);
             }
         });
 
-        // 1.3 構造 API 查詢: 將包含項改為 OR 查詢 (用 | 連接)
-        // 這樣 API 就能返回包含任一關鍵字的所有結果
-        let apiQueryForOR = includeTerms.join('|');
+        // 1.3 構造 API 查詢: 將所有包含項用空格連接 (讓 API 廣泛搜尋)
+        let finalApiQuery = includeTerms.join(' ');
         
-        // 1.4 將排除項加入 API 查詢 (API 仍執行排除邏輯)
+        // 1.4 將排除項重新加入到 API 查詢的末尾，並用 '-' 號前綴
         excludeTerms.forEach(term => {
-            apiQueryForOR += ` -${term}`;
+            finalApiQuery += ` -"${term}"`; // 對排除詞加引號，確保精確排除
         });
         
-        apiQueryForOR = apiQueryForOR.trim();
+        finalApiQuery = finalApiQuery.trim();
 
-        if (apiQueryForOR === '') {
+        if (finalApiQuery === '') {
             statusText.textContent = '查詢字串無效或僅包含無效排除項。';
             return;
         }
         // -----------------------
         
         try {
-            // 呼叫 API，此時 API 會返回包含 "貝果" 或 "起司" 的所有結果 (不包含排除項)
-            const url = `${API_URL}?q=${encodeURIComponent(apiQueryForOR)}`;
+            // 呼叫 API，此時 API 會盡可能返回所有與 finalApiQuery 相關的結果
+            const url = `${API_URL}?q=${encodeURIComponent(finalApiQuery)}`;
             const response = await fetch(url);
             const data = await response.json(); 
 
@@ -194,12 +202,14 @@
 
             let filteredResults = data.data; 
             
-            // --- 2. 前端執行 AND 篩選 (只保留同時包含所有 includeTerms 的結果) ---
+            // --- 2. 前端執行嚴格的 AND 篩選 (只保留同時包含所有 includeTerms 的結果) ---
             if (includeTerms.length > 1) {
+                // 將所有包含項轉為小寫
                 const searchTermsLower = includeTerms.map(t => t.toLowerCase());
+                
                 filteredResults = data.data.filter(item => {
                     const itemNameLower = item['品名'].toLowerCase();
-                    // 確保商品名稱包含所有 includeTerms
+                    // 使用 .every() 確保品名同時包含所有關鍵詞
                     return searchTermsLower.every(term => itemNameLower.includes(term));
                 });
             }
@@ -207,11 +217,8 @@
 
             allResults = filteredResults; 
             const totalCount = allResults.length;
-            const standardQuery = data.standard_query;
-            
+            
             if (totalCount > 0) {
-                // 由於我們在前端執行了 AND 篩選，這裡的 standardQuery 可能會讓人困惑，
-                // 為了簡潔，我們只在結果數量少於 API 返回的數量時顯示篩選資訊
                 const initialCount = data.data.length;
                 let queryInfo = (initialCount !== totalCount) ? ` (已從 ${initialCount} 筆中篩選)` : '';
                 
@@ -234,6 +241,32 @@
             resultsContainer.classList.add('hidden');
         }
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
     // --- (以下是所有先前實現的輔助函式，未變動) ---
