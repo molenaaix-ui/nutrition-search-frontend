@@ -191,8 +191,10 @@
         
         try {
             // 呼叫 API，此時 API 會盡可能返回所有與 finalApiQuery 相關的結果
-            const url = `${API_URL}?q=${encodeURIComponent(finalApiQuery)}`;
-            const response = await fetch(url);
+// 在 performSearch 函式中， try { 之前加入:
+const url = `${API_URL}?q=${encodeURIComponent(finalApiQuery)}`;
+console.log("最終 API 查詢 URL:", url); // <--- 加入此行
+const response = await fetch(url);
             const data = await response.json(); 
 
             if (response.status !== 200) {
@@ -202,9 +204,9 @@
 
             let filteredResults = data.data; 
             
-            // --- 2. 前端執行嚴格的 AND 篩選 (只保留同時包含所有 includeTerms 的結果) ---
+// --- 2. 前端執行嚴格的 AND 篩選 (只保留同時包含所有 includeTerms 的結果) ---
             if (includeTerms.length > 1) {
-                // 將所有包含項轉為小寫
+                // 將所有包含項轉為小寫（這是確保不區分大小寫的關鍵！）
                 const searchTermsLower = includeTerms.map(t => t.toLowerCase());
                 
                 filteredResults = data.data.filter(item => {
@@ -215,7 +217,7 @@
             }
             // -------------------------------------------------------------
 
-            allResults = filteredResults; 
+            allResults = filteredResults; // 確保 allResults 變數被更新為篩選後的結果
             const totalCount = allResults.length;
             
             if (totalCount > 0) {
