@@ -434,9 +434,9 @@
 
         row.innerHTML = `
             <td class="px-3 py-3 text-sm font-medium text-gray-900" data-key="品名">${item['品名']}</td>
-            <td class="px-3 py-3 text-sm text-gray-500" data-key="備註">${item['備註'] || '-'}</td>
+            <td class="px-3 py-3 text-sm text-gray-700" data-key="備註">${item['備註'] || '-'}</td>
             
-            <td class="px-3 py-3 text-sm text-gray-700">
+            <td class="px-3 py-3 text-sm text-gray-500">
                 <input type="text"  id="weight-input-field"
                         value="${originalWeight === 0 ? '' : originalWeight}" class="weight-input"
                         oninput="recalculateNutrition(event)">
