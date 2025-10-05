@@ -437,12 +437,13 @@
             
             <td class="px-3 py-3 text-sm text-gray-700">
                 <input type="number" 
-                       step="0.1" 
-                       min="0" 
-                       id="weight-input-field"
-                       value="${originalWeight.toFixed(1)}" 
-                       class="weight-input"
-                       oninput="recalculateNutrition(event)">
+                       step="any" 
+                       min="0" 
+                       id="weight-input-field"
+                       value="${originalWeight}"
+                       class="weight-input"
+                       onfocus="this.select();"
+                       oninput="recalculateNutrition(event)">
             </td>
             
             ${nutritionTds}
