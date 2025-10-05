@@ -92,6 +92,36 @@
 <script>
     const API_URL = 'https://nutrition-search-worker.food-data.workers.dev'; 
     
+    // --- 【新增】同義詞映射表 ---
+    const SYNONYM_MAP = {
+        '貝果': ['貝果', '焙果'],
+        '起司': ['起司', '芝士', '乳酪', '起士'],
+        // 可擴充更多同義詞，例如: '咖啡': ['咖啡', '拿鐵', '美式', '卡布']
+    };
+
+    /**
+     * 輔助函式: 檢查並返回一個關鍵詞及其所有同義詞的陣列（聯集）。
+     * @param {string} term - 原始關鍵詞。
+     * @returns {string[]} - 包含原始詞及其所有同義詞的陣列。
+     */
+    function getExpandedTerms(term) {
+        term = term.toLowerCase();
+        let expanded = [term];
+        // 尋找此詞是否存在於 SYNONYM_MAP 的任何一個聯集內
+        for (const primary in SYNONYM_MAP) {
+            const lowerPrimary = primary.toLowerCase();
+            const lowerSynonyms = SYNONYM_MAP[primary].map(s => s.toLowerCase());
+            
+            if (lowerPrimary === term || lowerSynonyms.includes(term)) {
+                 // 找到聯集後，返回該聯集中所有不重複的詞彙
+                 const uniqueTerms = new Set([...lowerSynonyms, lowerPrimary]);
+                 return Array.from(uniqueTerms);
+            }
+        }
+        return expanded;
+    }
+    // ----------------------------
+
     // --- 狀態管理 ---
     const ITEMS_PER_PAGE = 20;
     let allResults = []; 
@@ -164,8 +194,8 @@
         statusText.textContent = `正在搜尋 "${rawQuery}"...`;
 
         // --- 1. 解析查詢：分離包含項和排除項 ---
-        const includeTerms = []; 
-        const excludeTerms = []; // 排除項仍可直接加入單一 API 查詢
+        const singleIncludeTerms = []; // 原始輸入中，需要包含的單字
+        const excludeTerms = []; 
 
         const excludeRegex = /-"([^"]+)"/g;
         let match;
@@ -176,17 +206,21 @@
             queryForInclusion = queryForInclusion.replace(match[0], ' '); 
         }
         
-        // 1.2 處理包含項：現在它們是單獨的 API 呼叫目標
+        // 1.2 處理包含項：將輸入的詞彙標準化並去重
         queryForInclusion.split(/\s+/).filter(t => t.length > 0).forEach(term => {
-            if (!includeTerms.includes(term)) {
-                includeTerms.push(term);
+            if (!singleIncludeTerms.includes(term)) {
+                singleIncludeTerms.push(term);
             }
         });
         
-        if (includeTerms.length === 0) {
+        if (singleIncludeTerms.length === 0) {
             statusText.textContent = '查詢字串無效。';
             return;
         }
+
+        // --- 【關鍵修改點 A】: 將每個單詞擴展為同義詞聯集組 ---
+        // 每個元素都是一個包含原始詞彙及其所有同義詞的陣列
+        const includeTermSets = singleIncludeTerms.map(term => getExpandedTerms(term));
 
         // --- 2. 多次 API 呼叫 ---
         let allApiResults = [];
@@ -196,20 +230,27 @@
         const excludeQueryPart = excludeTerms.map(term => ` -"${term}"`).join('');
 
         try {
-            // 針對每個包含項，分別進行一次 API 呼叫
-            const fetchPromises = includeTerms.map(async term => {
-                // 每個查詢都是單關鍵字 + 排除項
-                const singleApiQuery = `${term}${excludeQueryPart}`;
-                const url = `${API_URL}?q=${encodeURIComponent(singleApiQuery)}`;
-                console.log(`單獨 API 查詢 URL: ${url}`);
-                
-                const response = await fetch(url);
-                const data = await response.json();
-                
-                if (response.status === 200 && data.data) {
-                    return data.data; // 返回該次查詢的結果陣列
-                }
-                return [];
+            // 針對每個「關鍵字聯集組」中的每個詞彙，分別進行一次 API 呼叫
+            // 目的：將所有可能的同義詞組合結果都取回來 (聯集)
+            const fetchPromises = [];
+            includeTermSets.forEach(termSet => {
+                termSet.forEach(term => {
+                    const promise = (async () => {
+                        // 每個查詢都是單關鍵字 + 排除項
+                        const singleApiQuery = `${term}${excludeQueryPart}`;
+                        const url = `${API_URL}?q=${encodeURIComponent(singleApiQuery)}`;
+                        console.log(`單獨 API 查詢 URL: ${url}`);
+                        
+                        const response = await fetch(url);
+                        const data = await response.json();
+                        
+                        if (response.status === 200 && data.data) {
+                            return data.data; // 返回該次查詢的結果陣列
+                        }
+                        return [];
+                    })();
+                    fetchPromises.push(promise);
+                });
             });
 
             // 等待所有 API 呼叫完成
@@ -221,19 +262,22 @@
                 allApiResults.push(...arr);
             });
 
-            // 移除合併結果中的重複項目
+            // 移除合併結果中的重複項目 (重要：聯集結果需要去重)
             allApiResults = deduplicateResults(allApiResults);
             
             let filteredResults = allApiResults; 
 
-            // --- 3. 前端執行嚴格的 AND 篩選 ---
-            if (includeTerms.length > 1) {
-                const searchTermsLower = includeTerms.map(t => t.toLowerCase());
+            // --- 3. 【關鍵修改點 B】: 前端執行嚴格的 AND 篩選 (基於同義詞聯集) ---
+            if (includeTermSets.length > 1) {
                 
                 filteredResults = allApiResults.filter(item => {
                     const itemNameLower = item['品名'].toLowerCase();
-                    // 確保品名同時包含所有關鍵詞
-                    return searchTermsLower.every(term => itemNameLower.includes(term));
+                    
+                    // 確保品名對於每個「關鍵字聯集組」都能至少匹配一個詞彙
+                    return includeTermSets.every(termSet => {
+                         // 檢查 termSet (例如: ['貝果', '焙果']) 中是否有任一詞彙在品名中
+                         return termSet.some(term => itemNameLower.includes(term));
+                    });
                 });
             }
             // ------------------------------------
@@ -334,7 +378,8 @@
             
             if (highlightQuery) {
                 // 將所有空格替換為 |，以便正則表達式能匹配多個詞彙 (A|B)
-                const regexString = highlightQuery.split(/\s+/).filter(t => t.length > 0).join('|');
+                const regexString = query.split(/\s+/).filter(t => t.length > 0).flatMap(term => getExpandedTerms(term)).join('|');
+
                 try {
                      // 確保正規表達式使用全局 (g) 和忽略大小寫 (i) 
                      const regex = new RegExp(`(${regexString})`, 'gi');
