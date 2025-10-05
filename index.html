@@ -33,29 +33,6 @@
                     oninput="performSearchDebounced()">
         </div>
         
-<div class="mb-6 flex flex-wrap -mx-2">
-    <div class="w-full sm:w-1/3 px-2 mb-4 sm:mb-0">
-        <label for="filter-category" class="block text-sm font-medium text-gray-700 mb-1">分類：</label>
-        <select id="filter-category" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <option value="">[所有分類]</option>
-        </select>
-    </div>
-    <div class="w-full sm:w-1/3 px-2 mb-4 sm:mb-0">
-        <label for="filter-type" class="block text-sm font-medium text-gray-700 mb-1">類型：</label>
-        <select id="filter-type" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <option value="">[所有類型]</option>
-        </select>
-    </div>
-    <div class="w-full sm:w-1/3 px-2">
-        <label for="filter-content" class="block text-sm font-medium text-gray-700 mb-1">內容：</label>
-        <select id="filter-content" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <option value="">[所有內容]</option>
-        </select>
-    </div>
-</div>
-
-
-
         <p id="status-text" class="text-gray-500 mb-4 text-sm">請輸入關鍵字進行搜尋 (例如：貝果、拿鐵)</p>
 
         <div id="results-container" class="hidden">
@@ -112,73 +89,81 @@
         </div>
         </div>
 
-
 <script>
-    const API_URL = 'https://nutrition-search-worker.food-data.workers.dev';
-    const FILTER_API_URL = 'https://nutrition-filters.food-data.workers.dev';
+    const API_URL = 'https://nutrition-search-worker.food-data.workers.dev'; 
+    
+    };
 
-    // --- 新增篩選器相關變數 ---
-    const filterCategory = document.getElementById('filter-category');
-    const filterType = document.getElementById('filter-type');
-    const filterContent = document.getElementById('filter-content');
-
-    let ALL_FILTER_DATA = {};
-    // ----------------------------
-
-    // 舊有的函式定義...
+    /**
+     * 輔助函式: 檢查並返回一個關鍵詞及其所有同義詞的陣列（聯集）。
+     * @param {string} term - 原始關鍵詞。
+     * @returns {string[]} - 包含原始詞及其所有同義詞的陣列。
+     */
     function getExpandedTerms(term) {
-        // ... (保持不變)
-        // 這裡需要放入您原來的同義詞處理邏輯，如果沒有，此函式可以保持不變
-        return [term.toLowerCase()];
+        term = term.toLowerCase();
+        let expanded = [term];
+        // 尋找此詞是否存在於 SYNONYM_MAP 的任何一個聯集內
+        for (const primary in SYNONYM_MAP) {
+            const lowerPrimary = primary.toLowerCase();
+            const lowerSynonyms = SYNONYM_MAP[primary].map(s => s.toLowerCase());
+            
+            if (lowerPrimary === term || lowerSynonyms.includes(term)) {
+                 // 找到聯集後，返回該聯集中所有不重複的詞彙
+                 const uniqueTerms = new Set([...lowerSynonyms, lowerPrimary]);
+                 return Array.from(uniqueTerms);
+            }
+        }
+        return expanded;
     }
+    // ----------------------------
 
     // --- 狀態管理 ---
     const ITEMS_PER_PAGE = 20;
-    let allResults = [];
-    let currentStartIndex = 0;
-    let originalItemData = {};
+    let allResults = []; 
+    let currentStartIndex = 0; 
+    let originalItemData = {}; // 儲存該筆資料的原始營養數據和每 g 價值
     // -----------------------
 
     const searchInput = document.getElementById('search-input');
     const statusText = document.getElementById('status-text');
-    const resultsContainer = document.getElementById('results-container');
-    const resultsList = document.getElementById('results-list');
+    const resultsContainer = document.getElementById('results-container'); 
+    const resultsList = document.getElementById('results-list'); 
     const noResultsDiv = document.getElementById('no-results');
     const loadMoreBtn = document.getElementById('load-more-btn');
-
+    
     const detailsContainer = document.getElementById('details-container');
     const detailsItemName = document.getElementById('details-item-name');
     const detailsTbody = document.getElementById('details-tbody');
     const copyStatus = document.getElementById('copy-status');
 
     let debounceTimeout;
-
+    
     function performSearchDebounced() {
         clearTimeout(debounceTimeout);
-        debounceTimeout = setTimeout(performSearch, 300);
+        debounceTimeout = setTimeout(performSearch, 300); 
     }
-
-    // --- 新增篩選器事件監聽 ---
-    filterCategory.addEventListener('change', () => updateFilterOptions('category'));
-    filterType.addEventListener('change', () => updateFilterOptions('type'));
-    filterContent.addEventListener('change', () => updateFilterOptions('content'));
-    // ----------------------------
-
+    
     function prepareNewSearch() {
         detailsContainer.classList.add('hidden');
         resultsContainer.classList.add('hidden');
         noResultsDiv.classList.add('hidden');
         loadMoreBtn.classList.add('hidden');
-        resultsList.innerHTML = '';
-
+        resultsList.innerHTML = ''; 
+        
         allResults = [];
         currentStartIndex = 0;
     }
 
+
+
+
+
+
+// 定義一個輔助函式，用於從結果陣列中移除重複項目
     function deduplicateResults(results) {
         const seenNames = new Set();
         return results.filter(item => {
-            const name = item['品名'];
+            const name = item['品名']; // 假設品名是唯一的識別碼
             if (seenNames.has(name)) {
                 return false;
             }
@@ -187,262 +172,186 @@
         });
     }
 
-
-
-
-
-
-
-
-
-
-/**
- * 【修正】調整邏輯，允許三篩選器齊全時無需關鍵字
- */
-async function performSearch() {
-    const rawQuery = searchInput.value.trim();
-    const selectedCategory = filterCategory.value;
-    const selectedType = filterType.value;
-    const selectedContent = filterContent.value;
-    
-    // 現在 finalQuery 只包含用戶輸入的關鍵字 (例如：貝果)
-    const finalQuery = rawQuery; 
-
-    // ✅ 關鍵修正：判斷是否所有三個篩選器都有值 (精確篩選模式)
-    const isPreciseFilterMode = selectedCategory && selectedType && selectedContent;
-
-    if (finalQuery.length < 1) {
-        if (isPreciseFilterMode) {
-            // 在精確篩選模式下，即使關鍵字為空，也繼續搜尋。
-            statusText.textContent = `正在以 [${selectedCategory}] > [${selectedType}] > [${selectedContent}] 進行精確篩選...`;
-        } else if (!selectedCategory && !selectedType && !selectedContent) {
-            // 沒有關鍵字，也沒有任何篩選條件，則停止。
+    /**
+     * 【多重 API 呼叫版】將多關鍵字拆分為單關鍵字分別查詢，
+     * 在前端合併所有結果，再執行嚴格的 AND 篩選。
+     */
+    async function performSearch() {
+        const rawQuery = searchInput.value.trim();
+        // ... (長度檢查省略)
+        if (rawQuery.length < 1) {
             prepareNewSearch();
-            statusText.textContent = '請輸入至少 1 個字符或選擇篩選器開始搜尋';
+            statusText.textContent = '請輸入至少 1 個字符開始搜尋';
             return;
-        } else {
-             // 只有部分篩選條件，沒有關鍵字，則繼續搜尋，但狀態文字改變。
-             statusText.textContent = `正在以篩選器進行搜尋...`;
         }
-    } else {
-         // 有關鍵字時，照常搜尋。
-         statusText.textContent = `正在搜尋 "${finalQuery.trim()}"...`;
-    }
-    
-    // 如果沒有關鍵字，我們需要確保 `singleIncludeTerms` 至少有一個元素，
-    // 這樣底層的 API 呼叫邏輯 (for/fetchPromises) 才能正常運行。
-    // 在您的 Worker 端，如果 'q' 參數為空，它應該會被忽略，只執行精確篩選。
-    // 這裡我們暫時使用一個不可見的佔位符，以確保前端的 API 請求邏輯不會中斷。
-    
-    let singleIncludeTerms = [];
-    let includeTermSets = [];
-    const excludeTerms = [];
-    let excludeQueryPart = '';
 
-    if (finalQuery.length > 0) {
-        // 舊有的關鍵字處理邏輯
+        prepareNewSearch(); 
+        statusText.textContent = `正在搜尋 "${rawQuery}"...`;
+
+        // --- 1. 解析查詢：分離包含項和排除項 ---
+        const singleIncludeTerms = []; // 原始輸入中，需要包含的單字
+        const excludeTerms = []; 
+
         const excludeRegex = /-"([^"]+)"/g;
         let match;
-        let queryForInclusion = finalQuery;
+        let queryForInclusion = rawQuery;
 
-        while ((match = excludeRegex.exec(finalQuery)) !== null) {
-            excludeTerms.push(match[1].trim());
-            queryForInclusion = queryForInclusion.replace(match[0], ' ');
+        while ((match = excludeRegex.exec(rawQuery)) !== null) {
+            excludeTerms.push(match[1].trim()); 
+            queryForInclusion = queryForInclusion.replace(match[0], ' '); 
         }
-
+        
+        // 1.2 處理包含項：將輸入的詞彙標準化並去重
         queryForInclusion.split(/\s+/).filter(t => t.length > 0).forEach(term => {
             if (!singleIncludeTerms.includes(term)) {
                 singleIncludeTerms.push(term);
             }
         });
         
-        includeTermSets = singleIncludeTerms.map(term => getExpandedTerms(term));
-        excludeQueryPart = excludeTerms.map(term => ` -"${term}"`).join('');
-
         if (singleIncludeTerms.length === 0) {
             statusText.textContent = '查詢字串無效。';
             return;
         }
 
-    } else if (selectedCategory || selectedType || selectedContent) {
-        // 僅有篩選器時，使用一個虛擬詞彙來觸發 API 請求流程
-        // 由於您的 Worker 已經改寫成可以處理空 q 的情況，這裡只需要一個元素來啟動前端迴圈。
-        singleIncludeTerms = ['']; 
-        includeTermSets = [['']];
-    } else {
-        // 沒有任何條件，這裡應該不會執行到，因為在上面已經 return 了
-        return;
-    }
-    
+        // --- 【關鍵修改點 A】: 將每個單詞擴展為同義詞聯集組 ---
+        // 每個元素都是一個包含原始詞彙及其所有同義詞的陣列
+        const includeTermSets = singleIncludeTerms.map(term => getExpandedTerms(term));
 
-    // 以下是原有的 API 呼叫邏輯，保持不變
-    let allApiResults = [];
-    let totalInitialCount = 0;
-    
-    try {
-        const fetchPromises = [];
-        includeTermSets.forEach(termSet => {
-            termSet.forEach(term => {
-                const promise = (async () => {
-                    // 如果 term 是空字串 (虛擬詞彙)，則 'q' 參數為空，Worker 會只執行精確篩選
-                    const singleApiQuery = `${term}${excludeQueryPart}`;
-                    
-                    const url = new URL(API_URL);
-                    url.searchParams.set('q', singleApiQuery);
-                    
-                    if (selectedCategory) url.searchParams.set('category', selectedCategory);
-                    if (selectedType) url.searchParams.set('type', selectedType);
-                    if (selectedContent) url.searchParams.set('content', selectedContent);
-                    
-                    console.log(`單獨 API 查詢 URL: ${url.toString()}`);
-                    
-                    const response = await fetch(url.toString());
-                    const data = await response.json();
-
-                    if (response.status === 200 && data.data) {
-                        return data.data;
-                    }
-                    return [];
-                })();
-                fetchPromises.push(promise);
-            });
-        });
-
-        const resultsArrays = await Promise.all(fetchPromises);
-
-        resultsArrays.forEach(arr => {
-            totalInitialCount += arr.length;
-            allApiResults.push(...arr);
-        });
-
-        allApiResults = deduplicateResults(allApiResults);
-
-        let filteredResults = allApiResults;
-
-        // 【注意】如果 `finalQuery` 為空，`includeTermSets.length` 會是 1 (因為我們加入了空字串)。
-        // 由於空字串不具備搜尋意義，我們應該只有在有實際關鍵字時才執行這個進一步的品名篩選。
-        if (finalQuery.length > 0 && includeTermSets.length > 1) {
-             filteredResults = allApiResults.filter(item => {
-                 const itemNameLower = item['品名'].toLowerCase();
-                 return includeTermSets.every(termSet => {
-                        return termSet.some(term => itemNameLower.includes(term));
-                 });
-             });
-        }
+        // --- 2. 多次 API 呼叫 ---
+        let allApiResults = [];
+        let totalInitialCount = 0;
         
-        allResults = filteredResults;
-        const totalCount = allResults.length;
+        // 排除項字串 (適用於每次 API 呼叫)
+        const excludeQueryPart = excludeTerms.map(term => ` -"${term}"`).join('');
 
-        if (totalCount > 0) {
-            // 狀態文字更新：如果無關鍵字，則不顯示額外篩選資訊
-            const finalInitialCount = allApiResults.length;
-            let queryInfo = (finalInitialCount !== totalCount && finalQuery.length > 0) ? ` (已從 ${finalInitialCount} 筆不重複結果中篩選)` : '';
-            
-            resultsList.innerHTML = '';
-            renderResults(allResults, 0, ITEMS_PER_PAGE);
-
-            const itemsShown = Math.min(ITEMS_PER_PAGE, totalCount);
-            // 修正 statusText 顯示，以符合精確篩選模式
-            if(finalQuery.length === 0 && isPreciseFilterMode) {
-                 statusText.innerHTML = `已找到 ${totalCount} 筆結果。目前顯示 ${itemsShown} 筆。`;
-            } else {
-                 statusText.innerHTML = `已找到 ${totalCount} 筆結果。目前顯示 ${itemsShown} 筆。${queryInfo}`;
-            }
-
-            resultsContainer.classList.remove('hidden');
-            updateLoadMoreButton();
-        } else {
-            statusText.textContent = `找不到符合條件的結果。`;
-            noResultsDiv.classList.remove('hidden');
-        }
-
-    } catch (error) {
-        console.error('Fetch error (網路或 JSON 解析錯誤):', error);
-        statusText.textContent = `連線失敗，請檢查 API 網址或網路。`;
-        resultsContainer.classList.add('hidden');
-    }
-} // <--- performSearch 函式在這裡正確結束
-
-
-
-
-
-
-
-    /**
-     * 新增：從 Worker API 載入篩選器選項
-     */
-    async function loadInitialFilters() {
         try {
-            const response = await fetch(FILTER_API_URL);
-            const data = await response.json();
+            // 針對每個「關鍵字聯集組」中的每個詞彙，分別進行一次 API 呼叫
+            // 目的：將所有可能的同義詞組合結果都取回來 (聯集)
+            const fetchPromises = [];
+            includeTermSets.forEach(termSet => {
+                termSet.forEach(term => {
+                    const promise = (async () => {
+                        // 每個查詢都是單關鍵字 + 排除項
+                        const singleApiQuery = `${term}${excludeQueryPart}`;
+                        const url = `${API_URL}?q=${encodeURIComponent(singleApiQuery)}`;
+                        console.log(`單獨 API 查詢 URL: ${url}`);
+                        
+                        const response = await fetch(url);
+                        const data = await response.json();
+                        
+                        if (response.status === 200 && data.data) {
+                            return data.data; // 返回該次查詢的結果陣列
+                        }
+                        return [];
+                    })();
+                    fetchPromises.push(promise);
+                });
+            });
 
-            if (data.filters) {
-                ALL_FILTER_DATA = data.filters;
-            } else {
-                 console.error("API 獲取篩選器資料失敗:", data);
+            // 等待所有 API 呼叫完成
+            const resultsArrays = await Promise.all(fetchPromises);
+            
+            // 合併所有結果並計算總數
+            resultsArrays.forEach(arr => {
+                totalInitialCount += arr.length;
+                allApiResults.push(...arr);
+            });
+
+            // 移除合併結果中的重複項目 (重要：聯集結果需要去重)
+            allApiResults = deduplicateResults(allApiResults);
+            
+            let filteredResults = allApiResults; 
+
+            // --- 3. 【關鍵修改點 B】: 前端執行嚴格的 AND 篩選 (基於同義詞聯集) ---
+            if (includeTermSets.length > 1) {
+                
+                filteredResults = allApiResults.filter(item => {
+                    const itemNameLower = item['品名'].toLowerCase();
+                    
+                    // 確保品名對於每個「關鍵字聯集組」都能至少匹配一個詞彙
+                    return includeTermSets.every(termSet => {
+                         // 檢查 termSet (例如: ['貝果', '焙果']) 中是否有任一詞彙在品名中
+                         return termSet.some(term => itemNameLower.includes(term));
+                    });
+                });
             }
+            // ------------------------------------
+
+            allResults = filteredResults; 
+            const totalCount = allResults.length;
+            
+            if (totalCount > 0) {
+                // 計算篩選資訊（總共從多少筆不重複的結果中篩選）
+                const finalInitialCount = allApiResults.length;
+                let queryInfo = (finalInitialCount !== totalCount) ? ` (已從 ${finalInitialCount} 筆不重複結果中篩選)` : '';
+                
+                resultsList.innerHTML = ''; 
+                renderResults(allResults, 0, ITEMS_PER_PAGE);
+
+                const itemsShown = Math.min(ITEMS_PER_PAGE, totalCount);
+                statusText.innerHTML = `已找到 ${totalCount} 筆結果。目前顯示 ${itemsShown} 筆。${queryInfo}`;
+                resultsContainer.classList.remove('hidden');
+                
+                updateLoadMoreButton();
+            } else {
+                statusText.textContent = `找不到與 "${rawQuery}" 相關的結果。`;
+                noResultsDiv.classList.remove('hidden');
+            }
+
         } catch (error) {
-            console.error("連線到篩選器 API 失敗:", error);
-            statusText.textContent = '警告：無法載入篩選器資料。';
+            console.error('Fetch error (網路或 JSON 解析錯誤):', error);
+            statusText.textContent = `連線失敗，請檢查 API 網址或網路。`;
+            resultsContainer.classList.add('hidden');
         }
-
-        // 填充「分類」選單
-        const categories = Object.keys(ALL_FILTER_DATA).sort();
-        filterCategory.innerHTML = '<option value="">[所有分類]</option>';
-        categories.forEach(category => {
-            const option = document.createElement('option');
-            option.value = category;
-            option.textContent = category;
-            filterCategory.appendChild(option);
-        });
-
-        // 初始化其他選單
-        updateFilterOptions('category');
     }
 
-    /**
-     * 新增：根據連動邏輯更新下拉選單
-     */
-    function updateFilterOptions(changedFilter) {
-        const selectedCategory = filterCategory.value;
-        const selectedType = filterType.value;
 
-        if (changedFilter === 'category') {
-            filterType.innerHTML = '<option value="">[所有類型]</option>';
-            filterContent.innerHTML = '<option value="">[所有內容]</option>';
 
-            if (selectedCategory && ALL_FILTER_DATA[selectedCategory]) {
-                const types = Object.keys(ALL_FILTER_DATA[selectedCategory]).sort();
-                types.forEach(type => {
-                    const option = document.createElement('option');
-                    option.value = type;
-                    option.textContent = type;
-                    filterType.appendChild(option);
-                });
-            }
-        }
 
-        if (changedFilter === 'category' || changedFilter === 'type') {
-            filterContent.innerHTML = '<option value="">[所有內容]</option>';
 
-            if (selectedCategory && selectedType && ALL_FILTER_DATA[selectedCategory] && ALL_FILTER_DATA[selectedCategory][selectedType]) {
-                const contents = ALL_FILTER_DATA[selectedCategory][selectedType];
-                contents.forEach(content => {
-                    const option = document.createElement('option');
-                    const value = content; // 'content' 可能是空字串，但應保持原樣
-                    const text = content === '' ? '[空值]' : content; // 顯示空值選項
-                    
-                    option.value = value;
-                    option.textContent = text;
-                    filterContent.appendChild(option);
-                });
-            }
-        }
 
-        // 任何篩選器變動都觸發搜尋
-        performSearchDebounced();
-    } // <--- updateFilterOptions 函式在這裡正確結束
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
     // --- (以下是所有先前實現的輔助函式，未變動) ---
@@ -453,21 +362,21 @@ async function performSearch() {
     function renderResults(items, start, end) {
         const itemsToRender = items.slice(start, end);
         const query = searchInput.value.trim();
-
+        
         itemsToRender.forEach(item => {
             const div = document.createElement('div');
             div.className = 'flex items-center justify-between p-2 hover:bg-gray-100 border-b last:border-b-0';
-
+            
             let displayItemName = item['品名'];
             // 顯示結果清單時，只將包含的詞彙高亮顯示
             const highlightQuery = query.replace(/-\s*?"[^"]+"/g, '').trim(); // 移除排除項
-
+            
             if (highlightQuery) {
                 // 將所有空格替換為 |，以便正則表達式能匹配多個詞彙 (A|B)
-                const regexString = highlightQuery.split(/\s+/).filter(t => t.length > 0).flatMap(term => getExpandedTerms(term)).join('|');
+                const regexString = query.split(/\s+/).filter(t => t.length > 0).flatMap(term => getExpandedTerms(term)).join('|');
 
                 try {
-                     // 確保正規表達式使用全局 (g) 和忽略大小寫 (i)
+                     // 確保正規表達式使用全局 (g) 和忽略大小寫 (i) 
                      const regex = new RegExp(`(${regexString})`, 'gi');
                      displayItemName = displayItemName.replace(regex, (match) => `<span class="bg-yellow-200 font-semibold rounded px-1">${match}</span>`);
 
@@ -478,25 +387,25 @@ async function performSearch() {
             }
 
 
-            const itemIndex = allResults.indexOf(item);
+            const itemIndex = allResults.indexOf(item); 
 
             div.innerHTML = `
                 <span class="text-gray-900">${displayItemName}</span>
-                <button class="text-blue-600 hover:text-blue-800 font-semibold ml-4"
+                <button class="text-blue-600 hover:text-blue-800 font-semibold ml-4" 
                         onclick="showDetails(${itemIndex})">
                     [查看]
                 </button>
             `;
-            resultsList.appendChild(div);
+            resultsList.appendChild(div); 
         });
-
+        
         currentStartIndex = end;
     }
 
     // --- 第二段功能實作 ---
-
+    
     const NUTRITION_KEYS = [
-        '熱量(kcal)', '蛋白質(g)', '脂肪(g)', '飽和脂肪(g)',
+        '熱量(kcal)', '蛋白質(g)', '脂肪(g)', '飽和脂肪(g)', 
         '反式脂肪(g)', '碳水化合物(g)', '糖(g)', '鈉(mg)'
     ];
 
@@ -505,21 +414,21 @@ async function performSearch() {
      */
     function formatNumericValue(value, key) {
         const num = parseFloat(value);
-
+        
         if (isNaN(num)) {
             return (typeof value === 'string' && value.trim() !== '') ? value.trim() : '-';
         }
-
+        
         if (num === 0) {
             // 對於非鈉的項目，0 顯示 0.0，鈉顯示 0
             return (key === '鈉(mg)') ? '0' : '0.0';
         }
-
+        
         if (key === '鈉(mg)') {
-            return Math.round(num).toString();
+            return Math.round(num).toString(); 
         }
-
-        return num.toFixed(1);
+        
+        return num.toFixed(1); 
     }
 
     /**
@@ -533,18 +442,18 @@ async function performSearch() {
         loadMoreBtn.classList.add('hidden');
         noResultsDiv.classList.add('hidden');
         copyStatus.classList.add('hidden');
-
+        
         detailsContainer.classList.remove('hidden');
         detailsTbody.innerHTML = '';
-
+        
         detailsItemName.textContent = item['品名'];
-
+        
         const originalWeight = parseFloat(item['重量(g)']) || 0;
         originalItemData = {
-            item,
+            item, 
             originalWeight: originalWeight
         };
-
+        
         if (originalWeight > 0) {
             NUTRITION_KEYS.forEach(key => {
                 const value = parseFloat(item[key]);
@@ -554,9 +463,9 @@ async function performSearch() {
 
         const row = document.createElement('tr');
         row.className = 'bg-white hover:bg-gray-50';
-
+        
         let nutritionTds = NUTRITION_KEYS.map(key => `
-            <td class="px-3 py-3 text-sm ${key === '熱量(kcal)' ? 'font-bold text-red-600' : 'text-gray-700'}"
+            <td class="px-3 py-3 text-sm ${key === '熱量(kcal)' ? 'font-bold text-red-600' : 'text-gray-700'}" 
                 data-key="${key}">
                 ${formatNumericValue(item[key], key)}
             </td>
@@ -566,17 +475,17 @@ async function performSearch() {
         row.innerHTML = `
             <td class="px-3 py-3 text-sm font-medium text-gray-900" data-key="品名">${item['品名']}</td>
             <td class="px-3 py-3 text-sm text-gray-900" data-key="備註">${item['備註'] || '-'}</td>
-
+            
             <td class="px-3 py-3 text-sm text-gray-700">
                 <input type="text"  id="weight-input-field"
                         value="${originalWeight === 0 ? '' : originalWeight}" class="weight-input"
                         oninput="recalculateNutrition(event)">
             </td>
-
+            
             ${nutritionTds}
-
+            
             <td class="px-3 py-3 text-sm">
-                <button class="text-blue-600 hover:text-blue-800 font-semibold"
+                <button class="text-blue-600 hover:text-blue-800 font-semibold" 
                         onclick="copyData()">
                     [複製]
                 </button>
@@ -586,45 +495,51 @@ async function performSearch() {
 
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
-
+    
     /**
      * 根據新的重量重新計算並更新營養數據
      */
     function recalculateNutrition(event) {
         const inputElement = event.target;
+        // **修改點 3: 移除對 inputElement.value 的格式化，允許用戶輸入無小數點的數字**
         let newWeight = parseFloat(inputElement.value);
 
         if (isNaN(newWeight) || newWeight < 0) {
+            // 如果輸入無效（非數字或小於 0），則視為 0
             newWeight = 0;
         }
+        
+        // **修改點 3: 移除 inputElement.value = newWeight.toFixed(1); 避免強制跳轉**
 
         const row = inputElement.closest('tr');
 
         NUTRITION_KEYS.forEach(key => {
             const perGValue = originalItemData[key + '_per_g'];
             const originalValue = originalItemData.item[key];
-
+            
             const targetTd = row.querySelector(`[data-key="${key}"]`);
-
+            
             if (newWeight > 0 && (perGValue > 0 || (perGValue === 0 && parseFloat(originalValue) === 0))) {
                 const newValue = perGValue * newWeight;
                 targetTd.textContent = formatNumericValue(newValue, key);
             } else if (newWeight === 0) {
-                targetTd.textContent = formatNumericValue(0, key);
+                // 如果重量為 0，則所有營養素也應為 0 或 0.0
+                 targetTd.textContent = formatNumericValue(0, key);
             } else {
+                // 這是為了處理原本就是文字或'N/A'等非數字的情況，維持原樣
                 targetTd.textContent = formatNumericValue(originalValue, key);
             }
         });
     }
-
+    
     /**
      * 返回第一段搜尋結果
      */
     function hideDetails() {
         detailsContainer.classList.add('hidden');
         resultsContainer.classList.remove('hidden');
-
-        updateLoadMoreButton();
+        
+        updateLoadMoreButton(); 
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
@@ -635,10 +550,11 @@ async function performSearch() {
     function copyData() {
         const item = originalItemData.item;
         const inputElement = document.getElementById('weight-input-field');
-
+        
+        // **使用 parseFloat 來獲取當前輸入框的值**
         const rawWeightInput = inputElement.value;
         const newWeight = parseFloat(rawWeightInput) || 0;
-
+        
         if (newWeight <= 0) {
             alert('重量無效，無法複製。');
             return;
@@ -647,10 +563,10 @@ async function performSearch() {
         const calculatedValues = NUTRITION_KEYS.map(key => {
             const perGValue = originalItemData[key + '_per_g'];
             const originalValue = originalItemData.item[key];
-
+            
             if (perGValue > 0 || (perGValue === 0 && parseFloat(originalValue) === 0)) {
                 const value = perGValue * newWeight;
-
+                
                 if (key === '鈉(mg)') {
                     return Math.round(value).toString();
                 } else {
@@ -661,7 +577,7 @@ async function performSearch() {
             }
         });
 
-        // 複製時使用輸入框的原始值或格式化後的數值
+        // **複製時使用輸入框的原始值或格式化後的數值**
         const finalWeightToCopy = rawWeightInput.includes('.') ? newWeight.toFixed(1) : newWeight.toString();
 
         const finalDataToCopy = [
@@ -669,20 +585,20 @@ async function performSearch() {
              finalWeightToCopy, // 採用無強制小數點的重量
              ...calculatedValues
         ];
-
+        
         const tabSeparatedData = finalDataToCopy.join('\t');
 
         navigator.clipboard.writeText(tabSeparatedData).then(() => {
             copyStatus.classList.remove('hidden');
             setTimeout(() => {
                 copyStatus.classList.add('hidden');
-            }, 3000);
+            }, 3000); 
         }).catch(err => {
             console.error('複製失敗:', err);
             alert('複製失敗，請檢查瀏覽器權限或手動複製：\n\n' + tabSeparatedData);
         });
     }
-
+    
     function loadMore() {
         const nextEndIndex = currentStartIndex + ITEMS_PER_PAGE;
         renderResults(allResults, currentStartIndex, nextEndIndex);
@@ -709,18 +625,7 @@ async function performSearch() {
             loadMoreBtn.classList.remove('hidden');
         }
     }
-
-    /**
-     * 頁面載入後自動啟動篩選器載入
-     */
-    window.onload = () => {
-        loadInitialFilters();
-    };
 </script>
-
-
-
-
 </body>
 
 </html>
