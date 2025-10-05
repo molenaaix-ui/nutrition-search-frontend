@@ -187,7 +187,18 @@
         });
     }
 
-// 【修正後的程式碼 - 前端】
+
+
+
+
+
+
+
+
+
+/**
+ * 【修正】調整邏輯，允許三篩選器齊全時無需關鍵字
+ */
 async function performSearch() {
     const rawQuery = searchInput.value.trim();
     const selectedCategory = filterCategory.value;
@@ -197,21 +208,39 @@ async function performSearch() {
     // 現在 finalQuery 只包含用戶輸入的關鍵字 (例如：貝果)
     const finalQuery = rawQuery; 
 
-    // ... (保留判斷 finalQuery.length 的邏輯)
-    if (finalQuery.length < 1 && !selectedCategory && !selectedType && !selectedContent) {
-        // 如果沒有關鍵字且沒有篩選條件，則停止
-        prepareNewSearch();
-        statusText.textContent = '請輸入至少 1 個字符或選擇篩選器開始搜尋';
-        return;
+    // ✅ 關鍵修正：判斷是否所有三個篩選器都有值 (精確篩選模式)
+    const isPreciseFilterMode = selectedCategory && selectedType && selectedContent;
+
+    if (finalQuery.length < 1) {
+        if (isPreciseFilterMode) {
+            // 在精確篩選模式下，即使關鍵字為空，也繼續搜尋。
+            statusText.textContent = `正在以 [${selectedCategory}] > [${selectedType}] > [${selectedContent}] 進行精確篩選...`;
+        } else if (!selectedCategory && !selectedType && !selectedContent) {
+            // 沒有關鍵字，也沒有任何篩選條件，則停止。
+            prepareNewSearch();
+            statusText.textContent = '請輸入至少 1 個字符或選擇篩選器開始搜尋';
+            return;
+        } else {
+             // 只有部分篩選條件，沒有關鍵字，則繼續搜尋，但狀態文字改變。
+             statusText.textContent = `正在以篩選器進行搜尋...`;
+        }
+    } else {
+         // 有關鍵字時，照常搜尋。
+         statusText.textContent = `正在搜尋 "${finalQuery.trim()}"...`;
     }
+    
+    // 如果沒有關鍵字，我們需要確保 `singleIncludeTerms` 至少有一個元素，
+    // 這樣底層的 API 呼叫邏輯 (for/fetchPromises) 才能正常運行。
+    // 在您的 Worker 端，如果 'q' 參數為空，它應該會被忽略，只執行精確篩選。
+    // 這裡我們暫時使用一個不可見的佔位符，以確保前端的 API 請求邏輯不會中斷。
+    
+    let singleIncludeTerms = [];
+    let includeTermSets = [];
+    const excludeTerms = [];
+    let excludeQueryPart = '';
 
-    // ... (保留準備搜尋狀態的邏輯)
-    prepareNewSearch();
-    statusText.textContent = `正在搜尋 "${finalQuery.trim()}"...`;
-
-        const singleIncludeTerms = [];
-        const excludeTerms = [];
-
+    if (finalQuery.length > 0) {
+        // 舊有的關鍵字處理邏輯
         const excludeRegex = /-"([^"]+)"/g;
         let match;
         let queryForInclusion = finalQuery;
@@ -226,29 +255,38 @@ async function performSearch() {
                 singleIncludeTerms.push(term);
             }
         });
+        
+        includeTermSets = singleIncludeTerms.map(term => getExpandedTerms(term));
+        excludeQueryPart = excludeTerms.map(term => ` -"${term}"`).join('');
 
         if (singleIncludeTerms.length === 0) {
             statusText.textContent = '查詢字串無效。';
             return;
         }
 
-        const includeTermSets = singleIncludeTerms.map(term => getExpandedTerms(term));
+    } else if (selectedCategory || selectedType || selectedContent) {
+        // 僅有篩選器時，使用一個虛擬詞彙來觸發 API 請求流程
+        // 由於您的 Worker 已經改寫成可以處理空 q 的情況，這裡只需要一個元素來啟動前端迴圈。
+        singleIncludeTerms = ['']; 
+        includeTermSets = [['']];
+    } else {
+        // 沒有任何條件，這裡應該不會執行到，因為在上面已經 return 了
+        return;
+    }
+    
 
-        let allApiResults = [];
-        let totalInitialCount = 0;
-
-        const excludeQueryPart = excludeTerms.map(term => ` -"${term}"`).join('');
-
-    // ... (重點修正區塊)
-
+    // 以下是原有的 API 呼叫邏輯，保持不變
+    let allApiResults = [];
+    let totalInitialCount = 0;
+    
     try {
         const fetchPromises = [];
         includeTermSets.forEach(termSet => {
             termSet.forEach(term => {
                 const promise = (async () => {
+                    // 如果 term 是空字串 (虛擬詞彙)，則 'q' 參數為空，Worker 會只執行精確篩選
                     const singleApiQuery = `${term}${excludeQueryPart}`;
                     
-                    // ✅ 修正：將篩選條件作為獨立參數附加到 URL
                     const url = new URL(API_URL);
                     url.searchParams.set('q', singleApiQuery);
                     
@@ -258,66 +296,78 @@ async function performSearch() {
                     
                     console.log(`單獨 API 查詢 URL: ${url.toString()}`);
                     
-                    // 使用修正後的 URL
                     const response = await fetch(url.toString());
+                    const data = await response.json();
 
-                        const data = await response.json();
-
-                        if (response.status === 200 && data.data) {
-                            return data.data;
-                        }
-                        return [];
-                    })();
-                    fetchPromises.push(promise);
-                });
+                    if (response.status === 200 && data.data) {
+                        return data.data;
+                    }
+                    return [];
+                })();
+                fetchPromises.push(promise);
             });
+        });
 
-            const resultsArrays = await Promise.all(fetchPromises);
+        const resultsArrays = await Promise.all(fetchPromises);
 
-            resultsArrays.forEach(arr => {
-                totalInitialCount += arr.length;
-                allApiResults.push(...arr);
-            });
+        resultsArrays.forEach(arr => {
+            totalInitialCount += arr.length;
+            allApiResults.push(...arr);
+        });
 
-            allApiResults = deduplicateResults(allApiResults);
+        allApiResults = deduplicateResults(allApiResults);
 
-            let filteredResults = allApiResults;
+        let filteredResults = allApiResults;
 
-            if (includeTermSets.length > 1) {
-                filteredResults = allApiResults.filter(item => {
-                    const itemNameLower = item['品名'].toLowerCase();
-                    return includeTermSets.every(termSet => {
-                           return termSet.some(term => itemNameLower.includes(term));
-                    });
-                });
-            }
-
-            allResults = filteredResults;
-            const totalCount = allResults.length;
-
-            if (totalCount > 0) {
-                const finalInitialCount = allApiResults.length;
-                let queryInfo = (finalInitialCount !== totalCount) ? ` (已從 ${finalInitialCount} 筆不重複結果中篩選)` : '';
-
-                resultsList.innerHTML = '';
-                renderResults(allResults, 0, ITEMS_PER_PAGE);
-
-                const itemsShown = Math.min(ITEMS_PER_PAGE, totalCount);
-                statusText.innerHTML = `已找到 ${totalCount} 筆結果。目前顯示 ${itemsShown} 筆。${queryInfo}`;
-                resultsContainer.classList.remove('hidden');
-
-                updateLoadMoreButton();
-            } else {
-                statusText.textContent = `找不到與 "${finalQuery}" 相關的結果。`;
-                noResultsDiv.classList.remove('hidden');
-            }
-
-        } catch (error) {
-            console.error('Fetch error (網路或 JSON 解析錯誤):', error);
-            statusText.textContent = `連線失敗，請檢查 API 網址或網路。`;
-            resultsContainer.classList.add('hidden');
+        // 【注意】如果 `finalQuery` 為空，`includeTermSets.length` 會是 1 (因為我們加入了空字串)。
+        // 由於空字串不具備搜尋意義，我們應該只有在有實際關鍵字時才執行這個進一步的品名篩選。
+        if (finalQuery.length > 0 && includeTermSets.length > 1) {
+             filteredResults = allApiResults.filter(item => {
+                 const itemNameLower = item['品名'].toLowerCase();
+                 return includeTermSets.every(termSet => {
+                        return termSet.some(term => itemNameLower.includes(term));
+                 });
+             });
         }
-    } // <--- performSearch 函式在這裡正確結束
+        
+        allResults = filteredResults;
+        const totalCount = allResults.length;
+
+        if (totalCount > 0) {
+            // 狀態文字更新：如果無關鍵字，則不顯示額外篩選資訊
+            const finalInitialCount = allApiResults.length;
+            let queryInfo = (finalInitialCount !== totalCount && finalQuery.length > 0) ? ` (已從 ${finalInitialCount} 筆不重複結果中篩選)` : '';
+            
+            resultsList.innerHTML = '';
+            renderResults(allResults, 0, ITEMS_PER_PAGE);
+
+            const itemsShown = Math.min(ITEMS_PER_PAGE, totalCount);
+            // 修正 statusText 顯示，以符合精確篩選模式
+            if(finalQuery.length === 0 && isPreciseFilterMode) {
+                 statusText.innerHTML = `已找到 ${totalCount} 筆結果。目前顯示 ${itemsShown} 筆。`;
+            } else {
+                 statusText.innerHTML = `已找到 ${totalCount} 筆結果。目前顯示 ${itemsShown} 筆。${queryInfo}`;
+            }
+
+            resultsContainer.classList.remove('hidden');
+            updateLoadMoreButton();
+        } else {
+            statusText.textContent = `找不到符合條件的結果。`;
+            noResultsDiv.classList.remove('hidden');
+        }
+
+    } catch (error) {
+        console.error('Fetch error (網路或 JSON 解析錯誤):', error);
+        statusText.textContent = `連線失敗，請檢查 API 網址或網路。`;
+        resultsContainer.classList.add('hidden');
+    }
+} // <--- performSearch 函式在這裡正確結束
+
+
+
+
+
+
 
     /**
      * 新增：從 Worker API 載入篩選器選項
