@@ -12,7 +12,7 @@
         }
         /* 突出顯示可編輯的重量輸入框 */
         .weight-input {
-            width: 80px; /* 限制寬度 */
+            width: 50px; /* 限制寬度 */
             text-align: right;
             border: 1px solid #3b82f6; /* 藍色邊框 */
             border-radius: 4px;
@@ -436,7 +436,7 @@
             <td class="px-3 py-3 text-sm font-medium text-gray-900" data-key="品名">${item['品名']}</td>
             <td class="px-3 py-3 text-sm text-gray-900" data-key="備註">${item['備註'] || '-'}</td>
             
-            <td class="px-3 py-3 text-sm text-gray-300">
+            <td class="px-3 py-3 text-sm text-gray-700">
                 <input type="text"  id="weight-input-field"
                         value="${originalWeight === 0 ? '' : originalWeight}" class="weight-input"
                         oninput="recalculateNutrition(event)">
