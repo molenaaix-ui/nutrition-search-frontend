@@ -187,37 +187,27 @@
         });
     }
 
-    /**
-     * 【修改】多重 API 呼叫版，整合篩選器選項
-     */
-    async function performSearch() {
-        const rawQuery = searchInput.value.trim();
-        const selectedCategory = filterCategory.value;
-        const selectedType = filterType.value;
-        const selectedContent = filterContent.value;
+// 【修正後的程式碼 - 前端】
+async function performSearch() {
+    const rawQuery = searchInput.value.trim();
+    const selectedCategory = filterCategory.value;
+    const selectedType = filterType.value;
+    const selectedContent = filterContent.value;
+    
+    // 現在 finalQuery 只包含用戶輸入的關鍵字 (例如：貝果)
+    const finalQuery = rawQuery; 
 
-        // --- 組合查詢字串 ---
-        let finalQuery = rawQuery;
-        if (selectedCategory) {
-            finalQuery = `${finalQuery} ${selectedCategory}`;
-        }
-        if (selectedType) {
-            finalQuery = `${finalQuery} ${selectedType}`;
-        }
-        if (selectedContent) {
-            finalQuery = `${finalQuery} ${selectedContent}`;
-        }
-        
-        finalQuery = finalQuery.trim();
-
-        if (finalQuery.length < 1) {
-            prepareNewSearch();
-            statusText.textContent = '請輸入至少 1 個字符或選擇篩選器開始搜尋';
-            return;
-        }
-
+    // ... (保留判斷 finalQuery.length 的邏輯)
+    if (finalQuery.length < 1 && !selectedCategory && !selectedType && !selectedContent) {
+        // 如果沒有關鍵字且沒有篩選條件，則停止
         prepareNewSearch();
-        statusText.textContent = `正在搜尋 "${finalQuery}"...`;
+        statusText.textContent = '請輸入至少 1 個字符或選擇篩選器開始搜尋';
+        return;
+    }
+
+    // ... (保留準備搜尋狀態的邏輯)
+    prepareNewSearch();
+    statusText.textContent = `正在搜尋 "${finalQuery.trim()}"...`;
 
         const singleIncludeTerms = [];
         const excludeTerms = [];
@@ -249,16 +239,28 @@
 
         const excludeQueryPart = excludeTerms.map(term => ` -"${term}"`).join('');
 
-        try {
-            const fetchPromises = [];
-            includeTermSets.forEach(termSet => {
-                termSet.forEach(term => {
-                    const promise = (async () => {
-                        const singleApiQuery = `${term}${excludeQueryPart}`;
-                        const url = `${API_URL}?q=${encodeURIComponent(singleApiQuery)}`;
-                        console.log(`單獨 API 查詢 URL: ${url}`);
+    // ... (重點修正區塊)
 
-                        const response = await fetch(url);
+    try {
+        const fetchPromises = [];
+        includeTermSets.forEach(termSet => {
+            termSet.forEach(term => {
+                const promise = (async () => {
+                    const singleApiQuery = `${term}${excludeQueryPart}`;
+                    
+                    // ✅ 修正：將篩選條件作為獨立參數附加到 URL
+                    const url = new URL(API_URL);
+                    url.searchParams.set('q', singleApiQuery);
+                    
+                    if (selectedCategory) url.searchParams.set('category', selectedCategory);
+                    if (selectedType) url.searchParams.set('type', selectedType);
+                    if (selectedContent) url.searchParams.set('content', selectedContent);
+                    
+                    console.log(`單獨 API 查詢 URL: ${url.toString()}`);
+                    
+                    // 使用修正後的 URL
+                    const response = await fetch(url.toString());
+
                         const data = await response.json();
 
                         if (response.status === 200 && data.data) {
