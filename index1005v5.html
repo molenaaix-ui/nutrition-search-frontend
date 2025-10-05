@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloudflare 營養數據搜尋 (兩段式查詢)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 讓表格在小螢幕上可以捲動 */
+        .details-table-container {
+            overflow-x: auto;
+        }
+        /* 突出顯示可編輯的重量輸入框 */
+        .weight-input {
+            width: 45px; /* 限制寬度 */
+            text-align: right;
+            border: 1px solid #3b82f6; /* 藍色邊框 */
+            border-radius: 4px;
+            padding: 2px 4px;
+            font-weight: bold;
+            background-color: #eff6ff; /* 淺藍色背景 */
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4 sm:p-8">
+
+    <div class="max-w-4xl mx-auto bg-white shadow-xl rounded-lg p-6 sm:p-8">
+        <h1 class="text-3xl font-bold text-gray-800 mb-6 border-b pb-2">營養數據即時搜尋 (兩段式查詢)</h1>
+        
+        <div class="mb-6">
+            <input type="text" id="search-input" placeholder="請輸入商品名稱、分類或品牌..."
+                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-lg"
+                    oninput="performSearchDebounced()">
+        </div>
+        
+        <p id="status-text" class="text-gray-500 mb-4 text-sm">請輸入關鍵字進行搜尋 (例如：貝果、拿鐵)</p>
+
+        <div id="results-container" class="hidden">
+            <div id="results-list" class="space-y-2 border border-gray-200 rounded-lg p-3 bg-white">
+                </div>
+        </div>
+        
+        <div class="mt-4 text-center">
+            <button id="load-more-btn"
+                    onclick="loadMore()"
+                    class="hidden px-6 py-2 bg-blue-500 text-white font-semibold rounded-lg hover:bg-blue-600 transition duration-150 shadow-md disabled:bg-gray-400 disabled:cursor-not-allowed">
+                載入更多 (尚餘 ?? 筆)
+            </button>
+        </div>
+
+        <div id="no-results" class="hidden text-center py-10">
+            <p class="text-xl font-semibold text-red-500">😭 找不到符合條件的商品。</p>
+            <p class="text-gray-500 mt-2">請嘗試使用其他關鍵字，或檢查是否有錯別字。</p>
+        </div>
+        <div id="details-container" class="hidden mt-8">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4" id="details-item-name"></h2>
+            
+            <button onclick="hideDetails()" 
+                    class="mb-4 px-4 py-1 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition duration-150">
+                ← 返回搜尋結果
+            </button>
+            
+            <div class="details-table-container shadow-md rounded-lg">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-blue-600 text-white">
+                        <tr>
+                            <th class="px-3 py-3 text-left text-xs font-medium tracking-wider">品名</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium tracking-wider">備註</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium tracking-wider">重量(g)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium tracking-wider">熱量(kcal)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium tracking-wider">蛋白質(g)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium tracking-wider">脂肪(g)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium tracking-wider">飽和脂肪(g)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium tracking-wider">反式脂肪(g)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium tracking-wider">碳水化合物(g)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium tracking-wider">糖(g)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium tracking-wider">鈉(mg)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium tracking-wider">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="details-tbody" class="bg-white divide-y divide-gray-200">
+                        </tbody>
+                </table>
+            </div>
+            
+            <p id="copy-status" class="hidden mt-3 text-sm font-semibold text-green-600">
+                ✅ 營養數據已成功複製到剪貼簿，可貼到 Excel。
+            </p>
+        </div>
+        </div>
+
+<script>
+    const API_URL = 'https://nutrition-search-worker.food-data.workers.dev'; 
+    
+    };
+
+    /**
+     * 輔助函式: 檢查並返回一個關鍵詞及其所有同義詞的陣列（聯集）。
+     * @param {string} term - 原始關鍵詞。
+     * @returns {string[]} - 包含原始詞及其所有同義詞的陣列。
+     */
+    function getExpandedTerms(term) {
+        term = term.toLowerCase();
+        let expanded = [term];
+        // 尋找此詞是否存在於 SYNONYM_MAP 的任何一個聯集內
+        for (const primary in SYNONYM_MAP) {
+            const lowerPrimary = primary.toLowerCase();
+            const lowerSynonyms = SYNONYM_MAP[primary].map(s => s.toLowerCase());
+            
+            if (lowerPrimary === term || lowerSynonyms.includes(term)) {
+                 // 找到聯集後，返回該聯集中所有不重複的詞彙
+                 const uniqueTerms = new Set([...lowerSynonyms, lowerPrimary]);
+                 return Array.from(uniqueTerms);
+            }
+        }
+        return expanded;
+    }
+    // ----------------------------
+
+    // --- 狀態管理 ---
+    const ITEMS_PER_PAGE = 20;
+    let allResults = []; 
+    let currentStartIndex = 0; 
+    let originalItemData = {}; // 儲存該筆資料的原始營養數據和每 g 價值
+    // -----------------------
+
+    const searchInput = document.getElementById('search-input');
+    const statusText = document.getElementById('status-text');
+    const resultsContainer = document.getElementById('results-container'); 
+    const resultsList = document.getElementById('results-list'); 
+    const noResultsDiv = document.getElementById('no-results');
+    const loadMoreBtn = document.getElementById('load-more-btn');
+    
+    const detailsContainer = document.getElementById('details-container');
+    const detailsItemName = document.getElementById('details-item-name');
+    const detailsTbody = document.getElementById('details-tbody');
+    const copyStatus = document.getElementById('copy-status');
+
+    let debounceTimeout;
+    
+    function performSearchDebounced() {
+        clearTimeout(debounceTimeout);
+        debounceTimeout = setTimeout(performSearch, 300); 
+    }
+    
+    function prepareNewSearch() {
+        detailsContainer.classList.add('hidden');
+        resultsContainer.classList.add('hidden');
+        noResultsDiv.classList.add('hidden');
+        loadMoreBtn.classList.add('hidden');
+        resultsList.innerHTML = ''; 
+        
+        allResults = [];
+        currentStartIndex = 0;
+    }
+
+
+
+
+
+
+// 定義一個輔助函式，用於從結果陣列中移除重複項目
+    function deduplicateResults(results) {
+        const seenNames = new Set();
+        return results.filter(item => {
+            const name = item['品名']; // 假設品名是唯一的識別碼
+            if (seenNames.has(name)) {
+                return false;
+            }
+            seenNames.add(name);
+            return true;
+        });
+    }
+
+    /**
+     * 【多重 API 呼叫版】將多關鍵字拆分為單關鍵字分別查詢，
+     * 在前端合併所有結果，再執行嚴格的 AND 篩選。
+     */
+    async function performSearch() {
+        const rawQuery = searchInput.value.trim();
+        // ... (長度檢查省略)
+        if (rawQuery.length < 1) {
+            prepareNewSearch();
+            statusText.textContent = '請輸入至少 1 個字符開始搜尋';
+            return;
+        }
+
+        prepareNewSearch(); 
+        statusText.textContent = `正在搜尋 "${rawQuery}"...`;
+
+        // --- 1. 解析查詢：分離包含項和排除項 ---
+        const singleIncludeTerms = []; // 原始輸入中，需要包含的單字
+        const excludeTerms = []; 
+
+        const excludeRegex = /-"([^"]+)"/g;
+        let match;
+        let queryForInclusion = rawQuery;
+
+        while ((match = excludeRegex.exec(rawQuery)) !== null) {
+            excludeTerms.push(match[1].trim()); 
+            queryForInclusion = queryForInclusion.replace(match[0], ' '); 
+        }
+        
+        // 1.2 處理包含項：將輸入的詞彙標準化並去重
+        queryForInclusion.split(/\s+/).filter(t => t.length > 0).forEach(term => {
+            if (!singleIncludeTerms.includes(term)) {
+                singleIncludeTerms.push(term);
+            }
+        });
+        
+        if (singleIncludeTerms.length === 0) {
+            statusText.textContent = '查詢字串無效。';
+            return;
+        }
+
+        // --- 【關鍵修改點 A】: 將每個單詞擴展為同義詞聯集組 ---
+        // 每個元素都是一個包含原始詞彙及其所有同義詞的陣列
+        const includeTermSets = singleIncludeTerms.map(term => getExpandedTerms(term));
+
+        // --- 2. 多次 API 呼叫 ---
+        let allApiResults = [];
+        let totalInitialCount = 0;
+        
+        // 排除項字串 (適用於每次 API 呼叫)
+        const excludeQueryPart = excludeTerms.map(term => ` -"${term}"`).join('');
+
+        try {
+            // 針對每個「關鍵字聯集組」中的每個詞彙，分別進行一次 API 呼叫
+            // 目的：將所有可能的同義詞組合結果都取回來 (聯集)
+            const fetchPromises = [];
+            includeTermSets.forEach(termSet => {
+                termSet.forEach(term => {
+                    const promise = (async () => {
+                        // 每個查詢都是單關鍵字 + 排除項
+                        const singleApiQuery = `${term}${excludeQueryPart}`;
+                        const url = `${API_URL}?q=${encodeURIComponent(singleApiQuery)}`;
+                        console.log(`單獨 API 查詢 URL: ${url}`);
+                        
+                        const response = await fetch(url);
+                        const data = await response.json();
+                        
+                        if (response.status === 200 && data.data) {
+                            return data.data; // 返回該次查詢的結果陣列
+                        }
+                        return [];
+                    })();
+                    fetchPromises.push(promise);
+                });
+            });
+
+            // 等待所有 API 呼叫完成
+            const resultsArrays = await Promise.all(fetchPromises);
+            
+            // 合併所有結果並計算總數
+            resultsArrays.forEach(arr => {
+                totalInitialCount += arr.length;
+                allApiResults.push(...arr);
+            });
+
+            // 移除合併結果中的重複項目 (重要：聯集結果需要去重)
+            allApiResults = deduplicateResults(allApiResults);
+            
+            let filteredResults = allApiResults; 
+
+            // --- 3. 【關鍵修改點 B】: 前端執行嚴格的 AND 篩選 (基於同義詞聯集) ---
+            if (includeTermSets.length > 1) {
+                
+                filteredResults = allApiResults.filter(item => {
+                    const itemNameLower = item['品名'].toLowerCase();
+                    
+                    // 確保品名對於每個「關鍵字聯集組」都能至少匹配一個詞彙
+                    return includeTermSets.every(termSet => {
+                         // 檢查 termSet (例如: ['貝果', '焙果']) 中是否有任一詞彙在品名中
+                         return termSet.some(term => itemNameLower.includes(term));
+                    });
+                });
+            }
+            // ------------------------------------
+
+            allResults = filteredResults; 
+            const totalCount = allResults.length;
+            
+            if (totalCount > 0) {
+                // 計算篩選資訊（總共從多少筆不重複的結果中篩選）
+                const finalInitialCount = allApiResults.length;
+                let queryInfo = (finalInitialCount !== totalCount) ? ` (已從 ${finalInitialCount} 筆不重複結果中篩選)` : '';
+                
+                resultsList.innerHTML = ''; 
+                renderResults(allResults, 0, ITEMS_PER_PAGE);
+
+                const itemsShown = Math.min(ITEMS_PER_PAGE, totalCount);
+                statusText.innerHTML = `已找到 ${totalCount} 筆結果。目前顯示 ${itemsShown} 筆。${queryInfo}`;
+                resultsContainer.classList.remove('hidden');
+                
+                updateLoadMoreButton();
+            } else {
+                statusText.textContent = `找不到與 "${rawQuery}" 相關的結果。`;
+                noResultsDiv.classList.remove('hidden');
+            }
+
+        } catch (error) {
+            console.error('Fetch error (網路或 JSON 解析錯誤):', error);
+            statusText.textContent = `連線失敗，請檢查 API 網址或網路。`;
+            resultsContainer.classList.add('hidden');
+        }
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    // --- (以下是所有先前實現的輔助函式，未變動) ---
+
+    /**
+     * 繪製結果到清單中 (第一段)
+     */
+    function renderResults(items, start, end) {
+        const itemsToRender = items.slice(start, end);
+        const query = searchInput.value.trim();
+        
+        itemsToRender.forEach(item => {
+            const div = document.createElement('div');
+            div.className = 'flex items-center justify-between p-2 hover:bg-gray-100 border-b last:border-b-0';
+            
+            let displayItemName = item['品名'];
+            // 顯示結果清單時，只將包含的詞彙高亮顯示
+            const highlightQuery = query.replace(/-\s*?"[^"]+"/g, '').trim(); // 移除排除項
+            
+            if (highlightQuery) {
+                // 將所有空格替換為 |，以便正則表達式能匹配多個詞彙 (A|B)
+                const regexString = query.split(/\s+/).filter(t => t.length > 0).flatMap(term => getExpandedTerms(term)).join('|');
+
+                try {
+                     // 確保正規表達式使用全局 (g) 和忽略大小寫 (i) 
+                     const regex = new RegExp(`(${regexString})`, 'gi');
+                     displayItemName = displayItemName.replace(regex, (match) => `<span class="bg-yellow-200 font-semibold rounded px-1">${match}</span>`);
+
+                } catch (e) {
+                    // 如果正則表達式無效（例如用戶輸入了特殊符號），則不進行高亮
+                    console.warn("Highlight regex error:", e);
+                }
+            }
+
+
+            const itemIndex = allResults.indexOf(item); 
+
+            div.innerHTML = `
+                <span class="text-gray-900">${displayItemName}</span>
+                <button class="text-blue-600 hover:text-blue-800 font-semibold ml-4" 
+                        onclick="showDetails(${itemIndex})">
+                    [查看]
+                </button>
+            `;
+            resultsList.appendChild(div); 
+        });
+        
+        currentStartIndex = end;
+    }
+
+    // --- 第二段功能實作 ---
+    
+    const NUTRITION_KEYS = [
+        '熱量(kcal)', '蛋白質(g)', '脂肪(g)', '飽和脂肪(g)', 
+        '反式脂肪(g)', '碳水化合物(g)', '糖(g)', '鈉(mg)'
+    ];
+
+    /**
+     * 通用函式：格式化數值以用於顯示在表格中
+     */
+    function formatNumericValue(value, key) {
+        const num = parseFloat(value);
+        
+        if (isNaN(num)) {
+            return (typeof value === 'string' && value.trim() !== '') ? value.trim() : '-';
+        }
+        
+        if (num === 0) {
+            // 對於非鈉的項目，0 顯示 0.0，鈉顯示 0
+            return (key === '鈉(mg)') ? '0' : '0.0';
+        }
+        
+        if (key === '鈉(mg)') {
+            return Math.round(num).toString(); 
+        }
+        
+        return num.toFixed(1); 
+    }
+
+    /**
+     * 顯示詳細資訊表格 (第二段)
+     */
+    function showDetails(index) {
+        const item = allResults[index];
+        if (!item) return;
+
+        resultsContainer.classList.add('hidden');
+        loadMoreBtn.classList.add('hidden');
+        noResultsDiv.classList.add('hidden');
+        copyStatus.classList.add('hidden');
+        
+        detailsContainer.classList.remove('hidden');
+        detailsTbody.innerHTML = '';
+        
+        detailsItemName.textContent = item['品名'];
+        
+        const originalWeight = parseFloat(item['重量(g)']) || 0;
+        originalItemData = {
+            item, 
+            originalWeight: originalWeight
+        };
+        
+        if (originalWeight > 0) {
+            NUTRITION_KEYS.forEach(key => {
+                const value = parseFloat(item[key]);
+                originalItemData[key + '_per_g'] = isNaN(value) ? 0 : value / originalWeight;
+            });
+        }
+
+        const row = document.createElement('tr');
+        row.className = 'bg-white hover:bg-gray-50';
+        
+        let nutritionTds = NUTRITION_KEYS.map(key => `
+            <td class="px-3 py-3 text-sm ${key === '熱量(kcal)' ? 'font-bold text-red-600' : 'text-gray-700'}" 
+                data-key="${key}">
+                ${formatNumericValue(item[key], key)}
+            </td>
+        `).join('');
+
+
+        row.innerHTML = `
+            <td class="px-3 py-3 text-sm font-medium text-gray-900" data-key="品名">${item['品名']}</td>
+            <td class="px-3 py-3 text-sm text-gray-900" data-key="備註">${item['備註'] || '-'}</td>
+            
+            <td class="px-3 py-3 text-sm text-gray-700">
+                <input type="text"  id="weight-input-field"
+                        value="${originalWeight === 0 ? '' : originalWeight}" class="weight-input"
+                        oninput="recalculateNutrition(event)">
+            </td>
+            
+            ${nutritionTds}
+            
+            <td class="px-3 py-3 text-sm">
+                <button class="text-blue-600 hover:text-blue-800 font-semibold" 
+                        onclick="copyData()">
+                    [複製]
+                </button>
+            </td>
+        `;
+        detailsTbody.appendChild(row);
+
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    
+    /**
+     * 根據新的重量重新計算並更新營養數據
+     */
+    function recalculateNutrition(event) {
+        const inputElement = event.target;
+        // **修改點 3: 移除對 inputElement.value 的格式化，允許用戶輸入無小數點的數字**
+        let newWeight = parseFloat(inputElement.value);
+
+        if (isNaN(newWeight) || newWeight < 0) {
+            // 如果輸入無效（非數字或小於 0），則視為 0
+            newWeight = 0;
+        }
+        
+        // **修改點 3: 移除 inputElement.value = newWeight.toFixed(1); 避免強制跳轉**
+
+        const row = inputElement.closest('tr');
+
+        NUTRITION_KEYS.forEach(key => {
+            const perGValue = originalItemData[key + '_per_g'];
+            const originalValue = originalItemData.item[key];
+            
+            const targetTd = row.querySelector(`[data-key="${key}"]`);
+            
+            if (newWeight > 0 && (perGValue > 0 || (perGValue === 0 && parseFloat(originalValue) === 0))) {
+                const newValue = perGValue * newWeight;
+                targetTd.textContent = formatNumericValue(newValue, key);
+            } else if (newWeight === 0) {
+                // 如果重量為 0，則所有營養素也應為 0 或 0.0
+                 targetTd.textContent = formatNumericValue(0, key);
+            } else {
+                // 這是為了處理原本就是文字或'N/A'等非數字的情況，維持原樣
+                targetTd.textContent = formatNumericValue(originalValue, key);
+            }
+        });
+    }
+    
+    /**
+     * 返回第一段搜尋結果
+     */
+    function hideDetails() {
+        detailsContainer.classList.add('hidden');
+        resultsContainer.classList.remove('hidden');
+        
+        updateLoadMoreButton(); 
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+
+    /**
+     * 處理資料複製到剪貼簿的功能
+     */
+    function copyData() {
+        const item = originalItemData.item;
+        const inputElement = document.getElementById('weight-input-field');
+        
+        // **使用 parseFloat 來獲取當前輸入框的值**
+        const rawWeightInput = inputElement.value;
+        const newWeight = parseFloat(rawWeightInput) || 0;
+        
+        if (newWeight <= 0) {
+            alert('重量無效，無法複製。');
+            return;
+        }
+
+        const calculatedValues = NUTRITION_KEYS.map(key => {
+            const perGValue = originalItemData[key + '_per_g'];
+            const originalValue = originalItemData.item[key];
+            
+            if (perGValue > 0 || (perGValue === 0 && parseFloat(originalValue) === 0)) {
+                const value = perGValue * newWeight;
+                
+                if (key === '鈉(mg)') {
+                    return Math.round(value).toString();
+                } else {
+                    return value.toFixed(1);
+                }
+            } else {
+                return originalValue;
+            }
+        });
+
+        // **複製時使用輸入框的原始值或格式化後的數值**
+        const finalWeightToCopy = rawWeightInput.includes('.') ? newWeight.toFixed(1) : newWeight.toString();
+
+        const finalDataToCopy = [
+             item['品名'],
+             finalWeightToCopy, // 採用無強制小數點的重量
+             ...calculatedValues
+        ];
+        
+        const tabSeparatedData = finalDataToCopy.join('\t');
+
+        navigator.clipboard.writeText(tabSeparatedData).then(() => {
+            copyStatus.classList.remove('hidden');
+            setTimeout(() => {
+                copyStatus.classList.add('hidden');
+            }, 3000); 
+        }).catch(err => {
+            console.error('複製失敗:', err);
+            alert('複製失敗，請檢查瀏覽器權限或手動複製：\n\n' + tabSeparatedData);
+        });
+    }
+    
+    function loadMore() {
+        const nextEndIndex = currentStartIndex + ITEMS_PER_PAGE;
+        renderResults(allResults, currentStartIndex, nextEndIndex);
+        updateLoadMoreButton();
+        statusText.innerHTML = `已找到 ${allResults.length} 筆結果。目前顯示 ${currentStartIndex} 筆。`;
+        loadMoreBtn.scrollIntoView({
+            behavior: 'smooth',
+            block: 'center'
+        });
+    }
+
+    function updateLoadMoreButton() {
+        const totalCount = allResults.length;
+        const itemsShown = currentStartIndex;
+        const remainingCount = totalCount - itemsShown;
+
+        if (remainingCount > 0) {
+            loadMoreBtn.textContent = `載入更多 (尚餘 ${remainingCount} 筆)`;
+            loadMoreBtn.classList.remove('hidden');
+            loadMoreBtn.disabled = false;
+        } else {
+            loadMoreBtn.textContent = `已載入所有 ${totalCount} 筆結果`;
+            loadMoreBtn.disabled = true;
+            loadMoreBtn.classList.remove('hidden');
+        }
+    }
+</script>
+</body>
+
+</html>
