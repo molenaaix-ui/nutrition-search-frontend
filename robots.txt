@@ -1,0 +1,13 @@
+# Allow all search engines and AI crawlers to crawl the site.
+User-agent: *
+Allow: /
+
+# Specifically allow access to all necessary resource files (JS/CSS/Data API)
+# This is crucial for Google to "render" your SPA correctly.
+# The actual resources are likely outside the pages.dev domain, but this confirms intent.
+Allow: /js/
+Allow: /css/
+Allow: /img/
+
+# Declare the location of your Sitemap to all major search engines.
+Sitemap: https://nutrition-search-app-front.pages.dev/sitemap.xml
