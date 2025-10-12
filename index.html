@@ -187,6 +187,37 @@
     const API_URL = 'https://nutrition-search-worker.food-data.workers.dev';
     const FILTER_API_URL = 'https://nutrition-filters.food-data.workers.dev';
 
+
+
+// 範例：前端 JavaScript (index.html 內) 呼叫 API 的方式
+
+const API_ENDPOINT = '您的 Worker URL'; // 例如：https://your-worker-name.your-username.workers.dev
+const YOUR_SECRET_KEY = '請填寫您在步驟 1 設定的金鑰';
+
+fetch(API_ENDPOINT + '/search?q=吐司', {
+    method: 'GET',
+    headers: {
+        // 這是最重要的部分：將金鑰加入到 Header
+        'X-API-Key': YOUR_SECRET_KEY, 
+        'Content-Type': 'application/json'
+    }
+})
+.then(response => response.json())
+.then(data => console.log(data))
+.catch(error => console.error('Error:', error));
+
+
+
+
+
+
+
+
+
+
+
+
+
     // --- 新增篩選器相關變數 ---
     const filterCategory = document.getElementById('filter-category');
     const filterType = document.getElementById('filter-type');
