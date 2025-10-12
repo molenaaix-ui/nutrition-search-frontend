@@ -198,19 +198,13 @@ fetch(API_ENDPOINT + '/search?q=吐司', {
     method: 'GET',
     headers: {
         // 這是最重要的部分：將金鑰加入到 Header
-        'X-API-Key':sk-v3rY5ecReT_t0keN-aBcD12345, 
+        'X-API-Key': sk-v3rY5ecReT_t0keN-aBcD12345, 
         'Content-Type': 'application/json'
     }
 })
 .then(response => response.json())
 .then(data => console.log(data))
 .catch(error => console.error('Error:', error));
-
-
-
-
-
-
 
 
 
